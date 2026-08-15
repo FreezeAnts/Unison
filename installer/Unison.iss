@@ -54,3 +54,19 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\Unison.exe"; Tasks: desktopic
 
 [Run]
 Filename: "{app}\Unison.exe"; Description: "Launch Unison"; Flags: nowait postinstall skipifsilent
+
+[Code]
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep <> usPostUninstall then
+    Exit;
+  if UninstallSilent then
+    Exit;
+  if MsgBox(
+       'Remove Unison settings and saved web sessions?' + #13#10 + #13#10 +
+       'This signs you out of Gmail, WhatsApp, and other web apps in Unison.',
+       mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+  begin
+    DelTree(ExpandConstant('{localappdata}\Unison'), True, True, True);
+  end;
+end;

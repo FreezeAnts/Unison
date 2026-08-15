@@ -79,6 +79,10 @@ public sealed partial class MainWindow : Window
 
         ViewModel = new MainViewModel(store, _serviceManager, iconLoader, webViewHost, loggerFactory.CreateLogger<MainViewModel>());
         ViewModel.MuteOthersDuringCalls = _settings.MuteOthersDuringCalls;
+        _serviceManager.HostedWindowTitleChanged += (id, title) =>
+        {
+            Content.DispatcherQueue.TryEnqueue(() => ViewModel.ApplyHostedTitle(id, title));
+        };
         _notificationManager = new NotificationManager(loggerFactory.CreateLogger<NotificationManager>());
         Closed += MainWindow_Closed;
         ContentHost.SizeChanged += ContentHost_SizeChanged;
@@ -296,12 +300,29 @@ public sealed partial class MainWindow : Window
         var transform = ContentHost.TransformToVisual((UIElement)Content);
         var topLeft = transform.TransformPoint(new global::Windows.Foundation.Point(0, 0));
         var scale = ContentHost.XamlRoot.RasterizationScale;
+        var chrome = ServiceChrome.TransformToVisual((UIElement)Content).TransformPoint(new global::Windows.Foundation.Point(0, 0));
 
         var bounds = new HostRect(
             origin.X + (int)Math.Round(topLeft.X * scale),
             origin.Y + (int)Math.Round(topLeft.Y * scale),
             (int)Math.Round(ContentHost.ActualWidth * scale),
             (int)Math.Round(ContentHost.ActualHeight * scale));
+
+        var chromeLeft = origin.X + (int)Math.Round(chrome.X * scale);
+        var chromeTop = origin.Y + (int)Math.Round(chrome.Y * scale);
+        var chromeRight = chromeLeft + (int)Math.Round(ServiceChrome.ActualWidth * scale);
+        var chromeBottom = chromeTop + (int)Math.Round(ServiceChrome.ActualHeight * scale);
+        var topBar = _settings.ServiceBarPlacement == ServiceBarPlacement.Top;
+        if (topBar && bounds.Top < chromeBottom)
+        {
+            var delta = chromeBottom - bounds.Top;
+            bounds = bounds with { Top = chromeBottom, Height = Math.Max(0, bounds.Height - delta) };
+        }
+        else if (!topBar && bounds.Left < chromeRight)
+        {
+            var delta = chromeRight - bounds.Left;
+            bounds = bounds with { Left = chromeRight, Width = Math.Max(0, bounds.Width - delta) };
+        }
 
         await _serviceManager.UpdateHostBoundsAsync(bounds).ConfigureAwait(true);
     }
@@ -458,7 +479,9 @@ public sealed partial class MainWindow : Window
 
     private async void ServiceList_ItemClick(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is ServiceItemViewModel item && ViewModel.Services.Contains(item))
+        var item = e.ClickedItem as ServiceItemViewModel;
+        var contains = item is not null && ViewModel.Services.Contains(item);
+        if (item is not null && contains)
         {
             await ViewModel.SelectServiceCommand.ExecuteAsync(item);
             await PushHostBoundsAsync();

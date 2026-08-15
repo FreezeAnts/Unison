@@ -66,7 +66,33 @@ public sealed class NotificationMapper
             return prefixCount;
         }
 
-        return 0;
+        var searchFrom = 0;
+        while (searchFrom < trimmed.Length)
+        {
+            var open = trimmed.IndexOf('(', searchFrom);
+            if (open < 0)
+            {
+                break;
+            }
+
+            var close = trimmed.IndexOf(')', open + 1);
+            if (close < 0)
+            {
+                break;
+            }
+
+            var inner = trimmed[(open + 1)..close];
+            if (int.TryParse(inner, out var nested)
+                && nested is >= 0 and <= 9999
+                && nested is < 1900 or > 2100)
+            {
+                return nested;
+            }
+
+            searchFrom = open + 1;
+        }
+
+        return null;
     }
 
     private static bool ContainsCallWord(string text)
@@ -122,10 +148,15 @@ public sealed class NotificationMapper
             return true;
         }
 
-        if (!string.IsNullOrWhiteSpace(service.ProcessName)
-            && haystack.Contains(service.ProcessName, StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(service.ProcessName))
         {
-            return true;
+            foreach (var part in service.ProcessName.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (part.Length >= 3 && haystack.Contains(part, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(service.Url)

@@ -85,10 +85,8 @@ public sealed partial class MainViewModel : ObservableObject
         ShowPlaceholder = false;
         PlaceholderText = string.Empty;
         _logger.LogInformation("User selected {ServiceId}.", item.Definition.Id);
-        item.UnreadCount = 0;
-        _toastCounts.Remove(item.Definition.Id);
-        _titleCounts.Remove(item.Definition.Id);
         await _serviceManager.SelectAsync(item.Definition.Id).ConfigureAwait(true);
+        RefreshBadges();
         RefreshCallMute();
     }
 
@@ -201,8 +199,21 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void OnWebTitleChanged(string serviceId, string title)
     {
+        ApplyHostedTitle(serviceId, title);
+    }
+
+    public void ApplyHostedTitle(string serviceId, string title)
+    {
         _titles[serviceId] = title;
-        _titleCounts[serviceId] = NotificationMapper.TryParseUnreadFromTitle(title) ?? 0;
+        var parsedCount = NotificationMapper.TryParseUnreadFromTitle(title);
+        if (parsedCount.HasValue)
+        {
+            _titleCounts[serviceId] = parsedCount.Value;
+        }
+        else
+        {
+            _titleCounts.Remove(serviceId);
+        }
         RefreshBadges();
         RefreshCallMute();
     }

@@ -96,7 +96,14 @@ public sealed class NativeWindowManager
         }
 
         Win32.ShowWindow(hWnd, Win32.SW_SHOW);
-        Win32.SetForegroundWindow(hWnd);
+        Win32.SetWindowPos(
+            hWnd,
+            Win32.HWND_NOTOPMOST,
+            0,
+            0,
+            0,
+            0,
+            Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
         HideFromTaskbarWithRetry(hWnd);
     }
 

@@ -51,13 +51,6 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
             return;
         }
 
-        var running = ProcessLocator.FindByNames(names);
-        if (running.Count > 0)
-        {
-            Logger.LogInformation("{ServiceId} is already running ({Count} process(es)).", Definition.Id, running.Count);
-            return;
-        }
-
         TryLaunch();
         await Task.CompletedTask.ConfigureAwait(false);
     }
@@ -75,10 +68,7 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var windows = names
-                .SelectMany(WindowDiscovery.FindWindowsByProcessName)
-                .DistinctBy(w => w.Handle)
-                .ToList();
+            var windows = CollectCandidateWindows(names);
             var chosen = RankMainWindow(windows);
             if (chosen is not null)
             {
@@ -120,6 +110,24 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
         }
 
         NativeWindowManager.Show(handle.Value);
+    }
+
+    public string ReadWindowTitle()
+    {
+        if (ManagedWindow is not { } handle || !Win32.IsWindow(handle))
+        {
+            return string.Empty;
+        }
+
+        var length = Win32.GetWindowTextLength(handle);
+        if (length <= 0)
+        {
+            return string.Empty;
+        }
+
+        var builder = new System.Text.StringBuilder(length + 1);
+        _ = Win32.GetWindowText(handle, builder, builder.Capacity);
+        return builder.ToString();
     }
 
     public virtual Task DeactivateAsync(CancellationToken cancellationToken = default)
@@ -214,11 +222,45 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
             .FirstOrDefault();
     }
 
-    protected static bool IsPlausibleMainWindow(DiscoveredWindow window)
+    private List<DiscoveredWindow> CollectCandidateWindows(IReadOnlyList<string> names)
     {
-        return window.IsVisible
-            && !window.IsToolWindow
+        var windows = names
+            .SelectMany(WindowDiscovery.FindWindowsByProcessName)
+            .ToList();
+
+        var shellLaunch = Definition.ExecutablePath?.StartsWith("shell:", StringComparison.OrdinalIgnoreCase) == true;
+        if (shellLaunch)
+        {
+            windows.AddRange(WindowDiscovery.FindWindowsByProcessName("ApplicationFrameHost"));
+        }
+
+        return windows.DistinctBy(w => w.Handle).ToList();
+    }
+
+    protected bool IsPlausibleMainWindow(DiscoveredWindow window)
+    {
+        var name = Definition.Name;
+        var title = window.Title ?? string.Empty;
+        var chrome = window.ClassName.Contains("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase);
+        var frame = window.ClassName.Equals("ApplicationFrameWindow", StringComparison.OrdinalIgnoreCase)
+            || window.ClassName.Equals("WinUIDesktopWin32WindowClass", StringComparison.OrdinalIgnoreCase);
+        var titleMatches = !string.IsNullOrWhiteSpace(title)
+            && (title.Contains(name, StringComparison.OrdinalIgnoreCase)
+                || title.Contains("Discord", StringComparison.OrdinalIgnoreCase)
+                    && name.Contains("Discord", StringComparison.OrdinalIgnoreCase));
+
+        if ((chrome || frame) && titleMatches && window.Area >= 8_000)
+        {
+            return true;
+        }
+
+        if (window.Area < 8_000)
+        {
+            return false;
+        }
+
+        return !window.IsToolWindow
             && window.OwnerHandle == IntPtr.Zero
-            && !string.IsNullOrWhiteSpace(window.Title);
+            && !string.IsNullOrWhiteSpace(title);
     }
 }

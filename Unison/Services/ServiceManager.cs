@@ -19,6 +19,7 @@ public sealed class ServiceManager
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<ServiceManager> _logger;
     private readonly Dictionary<string, IServiceAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
+    private CancellationTokenSource? _selectCts;
     private HostRect _hostBounds;
 
     public ServiceManager(
@@ -35,6 +36,8 @@ public sealed class ServiceManager
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<ServiceManager>();
     }
+
+    public event Action<string, string>? HostedWindowTitleChanged;
 
     public string? SelectedServiceId { get; private set; }
 
@@ -73,11 +76,17 @@ public sealed class ServiceManager
 
     public async Task SelectAsync(string serviceId, CancellationToken cancellationToken = default)
     {
+        _selectCts?.Cancel();
+        _selectCts?.Dispose();
+        _selectCts = new CancellationTokenSource();
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _selectCts.Token);
+        var token = linked.Token;
+
         if (SelectedServiceId is { } currentId &&
             _adapters.TryGetValue(currentId, out var current) &&
             !string.Equals(currentId, serviceId, StringComparison.OrdinalIgnoreCase))
         {
-            await current.DeactivateAsync(cancellationToken).ConfigureAwait(true);
+            await current.DeactivateAsync(CancellationToken.None).ConfigureAwait(true);
         }
 
         if (!_adapters.TryGetValue(serviceId, out var next))
@@ -87,14 +96,29 @@ public sealed class ServiceManager
         }
 
         SelectedServiceId = serviceId;
-        await next.StartAsync(cancellationToken).ConfigureAwait(true);
-        if (_hostBounds.IsValid)
+        try
         {
-            await next.ApplyHostBoundsAsync(_hostBounds, cancellationToken).ConfigureAwait(true);
-        }
+            await next.StartAsync(token).ConfigureAwait(true);
+            if (_hostBounds.IsValid)
+            {
+                await next.ApplyHostBoundsAsync(_hostBounds, token).ConfigureAwait(true);
+            }
 
-        await next.ActivateAsync(cancellationToken).ConfigureAwait(true);
-        _logger.LogInformation("Selected service {ServiceId}.", serviceId);
+            await next.ActivateAsync(token).ConfigureAwait(true);
+            if (next is NativeApplicationAdapter native)
+            {
+                var title = native.ReadWindowTitle();
+                if (!string.IsNullOrWhiteSpace(title))
+                {
+                    HostedWindowTitleChanged?.Invoke(serviceId, title);
+                }
+            }
+            _logger.LogInformation("Selected service {ServiceId}.", serviceId);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("Selection of {ServiceId} was cancelled.", serviceId);
+        }
     }
 
     public async Task UpdateHostBoundsAsync(HostRect bounds, CancellationToken cancellationToken = default)

@@ -76,7 +76,17 @@ public sealed class NotificationManager
             return;
         }
 
-        var toasts = await _listener.GetNotificationsAsync(NotificationKinds.Toast);
+        IReadOnlyList<UserNotification> toasts;
+        try
+        {
+            toasts = await _listener.GetNotificationsAsync(NotificationKinds.Toast);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read Windows toast notifications.");
+            return;
+        }
+
         var services = _services();
         var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         string? latestServiceId = null;
