@@ -1,0 +1,189 @@
+<Window
+    x:Class="Unison.Views.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:vm="using:Unison.ViewModels"
+    mc:Ignorable="d"
+    Title="Unison">
+
+    <Grid>
+        <Grid.Resources>
+            <ItemsPanelTemplate x:Key="VerticalServicePanel">
+                <ItemsStackPanel Orientation="Vertical" />
+            </ItemsPanelTemplate>
+            <ItemsPanelTemplate x:Key="HorizontalServicePanel">
+                <ItemsStackPanel Orientation="Horizontal" />
+            </ItemsPanelTemplate>
+            <DataTemplate x:Key="SidebarServiceTemplate" x:DataType="vm:ServiceItemViewModel">
+                <Grid>
+                    <Grid.ContextFlyout>
+                        <MenuFlyout>
+                            <MenuFlyoutItem Text="Remove" Click="RemoveServiceMenu_Click" />
+                        </MenuFlyout>
+                    </Grid.ContextFlyout>
+                    <StackPanel Orientation="Horizontal" Spacing="12" Padding="4">
+                        <Grid Width="24" Height="24">
+                            <Image
+                                Width="20"
+                                Height="20"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Source="{x:Bind IconImage, Mode=OneWay}"
+                                Visibility="{x:Bind IconImageVisibility, Mode=OneWay}" />
+                            <FontIcon
+                                Glyph="{x:Bind IconGlyph}"
+                                FontSize="16"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Visibility="{x:Bind GlyphVisibility, Mode=OneWay}" />
+                            <InfoBadge
+                                MinWidth="14"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Top"
+                                Value="{x:Bind UnreadCount, Mode=OneWay}"
+                                Visibility="{x:Bind BadgeVisibility, Mode=OneWay}" />
+                        </Grid>
+                        <TextBlock Text="{x:Bind Name}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Grid>
+            </DataTemplate>
+            <DataTemplate x:Key="TopServiceTemplate" x:DataType="vm:ServiceItemViewModel">
+                <Grid Width="40" Height="40" ToolTipService.ToolTip="{x:Bind Name}">
+                    <Grid.ContextFlyout>
+                        <MenuFlyout>
+                            <MenuFlyoutItem Text="Remove" Click="RemoveServiceMenu_Click" />
+                        </MenuFlyout>
+                    </Grid.ContextFlyout>
+                    <Image
+                        Width="24"
+                        Height="24"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Source="{x:Bind IconImage, Mode=OneWay}"
+                        Visibility="{x:Bind IconImageVisibility, Mode=OneWay}" />
+                    <FontIcon
+                        Glyph="{x:Bind IconGlyph}"
+                        FontSize="18"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Visibility="{x:Bind GlyphVisibility, Mode=OneWay}" />
+                    <InfoBadge
+                        MinWidth="14"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top"
+                        Value="{x:Bind UnreadCount, Mode=OneWay}"
+                        Visibility="{x:Bind BadgeVisibility, Mode=OneWay}" />
+                </Grid>
+            </DataTemplate>
+        </Grid.Resources>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border
+            x:Name="AppTitleBar"
+            Grid.Row="0"
+            Background="{ThemeResource LayerFillColorDefaultBrush}"
+            Padding="16,0,140,0">
+            <Grid>
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Image
+                        Width="20"
+                        Height="20"
+                        Source="{x:Bind FileToImage(HeaderIconPath)}"
+                        Visibility="{x:Bind BoolToVisibility(HeaderIconPath)}" />
+                    <TextBlock
+                        Text="Unison"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource SubtitleTextBlockStyle}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid x:Name="WorkspaceGrid" Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Grid
+                x:Name="ServiceChrome"
+                Grid.Column="0"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <ListView
+                    x:Name="ServiceList"
+                    Grid.Row="0"
+                    ItemsSource="{x:Bind ViewModel.Services, Mode=OneWay}"
+                    SelectedItem="{x:Bind ViewModel.SelectedService, Mode=OneWay}"
+                    SelectionMode="Single"
+                    IsItemClickEnabled="True"
+                    CanDragItems="True"
+                    CanReorderItems="True"
+                    AllowDrop="True"
+                    ItemClick="ServiceList_ItemClick"
+                    DragItemsCompleted="ServiceList_DragItemsCompleted"
+                    ItemTemplate="{StaticResource SidebarServiceTemplate}"
+                    ItemsPanel="{StaticResource VerticalServicePanel}"
+                    Padding="8" />
+
+                <StackPanel
+                    x:Name="ServiceChromeButtons"
+                    Grid.Row="1"
+                    Orientation="Vertical">
+                    <Button
+                        x:Name="AddServiceButton"
+                        HorizontalAlignment="Stretch"
+                        Margin="12,8,12,4"
+                        Click="AddServiceButton_Click"
+                        Content="+ Add Service" />
+                    <Button
+                        x:Name="SettingsButton"
+                        HorizontalAlignment="Stretch"
+                        Margin="12,0,12,8"
+                        Click="SettingsButton_Click"
+                        Content="Settings" />
+                    <TextBlock
+                        x:Name="ProductLabel"
+                        Margin="12,0,12,12"
+                        Opacity="0.55"
+                        FontSize="11"
+                        Text="A FreezeAnts product" />
+                </StackPanel>
+            </Grid>
+
+            <Border
+                x:Name="ContentHost"
+                Grid.Column="1"
+                Margin="16"
+                Background="{ThemeResource LayerFillColorDefaultBrush}"
+                CornerRadius="8">
+                <Grid>
+                    <Grid x:Name="WebHost" />
+                    <StackPanel
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        Spacing="8"
+                        Visibility="{x:Bind BoolToVisibility(ViewModel.ShowPlaceholder), Mode=OneWay}">
+                        <TextBlock
+                            Text="{x:Bind ViewModel.StatusText, Mode=OneWay}"
+                            Style="{StaticResource TitleTextBlockStyle}"
+                            HorizontalAlignment="Center" />
+                        <TextBlock
+                            Text="{x:Bind ViewModel.PlaceholderText, Mode=OneWay}"
+                            Opacity="0.7"
+                            HorizontalAlignment="Center"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>
