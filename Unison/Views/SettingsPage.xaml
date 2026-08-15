@@ -38,5 +38,24 @@
             Opacity="0.7"
             TextWrapping="Wrap"
             Text="When a web service is in a call, other Unison web tabs are muted and hidden. Desktop apps keep their own volume." />
+
+        <TextBlock Text="Updates" Style="{StaticResource SubtitleTextBlockStyle}" />
+        <TextBlock Opacity="0.7" Text="{x:Bind ViewModel.CurrentVersionText}" />
+        <ToggleSwitch
+            Header="Check for updates when Unison starts"
+            IsOn="{x:Bind ViewModel.CheckForUpdatesOnStartup, Mode=TwoWay}" />
+        <Button
+            Content="Check for updates"
+            Command="{x:Bind ViewModel.CheckForUpdatesCommand}"
+            IsEnabled="{x:Bind NotBusy(ViewModel.CheckBusy), Mode=OneWay}" />
+        <Button
+            Content="Download and install"
+            Command="{x:Bind ViewModel.InstallUpdateCommand}"
+            Visibility="{x:Bind ShowIf(ViewModel.InstallVisible), Mode=OneWay}"
+            IsEnabled="{x:Bind CanInstall(ViewModel.InstallVisible, ViewModel.CheckBusy), Mode=OneWay}" />
+        <TextBlock
+            Opacity="0.7"
+            TextWrapping="Wrap"
+            Text="{x:Bind ViewModel.UpdateStatus, Mode=OneWay}" />
     </StackPanel>
 </UserControl>

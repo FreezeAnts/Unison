@@ -1,15 +1,21 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.UI.Dispatching;
 
 namespace Unison.Windows;
 
 /// <summary>
 /// Remembers original bounds/show state of managed main windows so they can be restored on exit.
 /// Called by native adapters. Uses Win32 GetWindowPlacement/SetWindowPos. Never uses SetParent.
+/// Hosted windows are removed from the taskbar via ITaskbarList.DeleteTab while Unison manages them.
 /// </summary>
 public sealed class NativeWindowManager
 {
+    private static readonly int[] TaskbarHideRetryMs = [400, 1200];
+
     private readonly ILogger<NativeWindowManager> _logger;
     private readonly Dictionary<IntPtr, ManagedWindowState> _states = new();
+    private Win32.ITaskbarList? _taskbarList;
+    private bool _taskbarListFailed;
 
     public NativeWindowManager(ILogger<NativeWindowManager> logger)
     {
@@ -22,6 +28,7 @@ public sealed class NativeWindowManager
     {
         if (_states.ContainsKey(hWnd))
         {
+            HideFromTaskbar(hWnd);
             return;
         }
 
@@ -44,6 +51,7 @@ public sealed class NativeWindowManager
             normal.Width,
             normal.Height,
             placement.showCmd);
+        HideFromTaskbar(hWnd);
     }
 
     public void FitToRect(IntPtr hWnd, HostRect bounds)
@@ -67,6 +75,7 @@ public sealed class NativeWindowManager
             bounds.Width,
             bounds.Height,
             Win32.SWP_NOZORDER | Win32.SWP_SHOWWINDOW);
+        HideFromTaskbarWithRetry(hWnd);
     }
 
     public void Hide(IntPtr hWnd)
@@ -88,6 +97,7 @@ public sealed class NativeWindowManager
 
         Win32.ShowWindow(hWnd, Win32.SW_SHOW);
         Win32.SetForegroundWindow(hWnd);
+        HideFromTaskbarWithRetry(hWnd);
     }
 
     public void Restore(IntPtr hWnd)
@@ -120,12 +130,135 @@ public sealed class NativeWindowManager
             return;
         }
 
+        RestoreTaskbarTab(state);
         var placement = state.Placement;
         placement.length = System.Runtime.InteropServices.Marshal.SizeOf<Win32.WINDOWPLACEMENT>();
         Win32.SetWindowPlacement(state.Handle, ref placement);
         Win32.ShowWindow(state.Handle, placement.showCmd == Win32.SW_HIDE ? Win32.SW_SHOW : placement.showCmd);
         _logger.LogInformation("Restored window {Handle}.", state.Handle);
     }
+
+    private void HideFromTaskbarWithRetry(IntPtr hWnd)
+    {
+        HideFromTaskbar(hWnd);
+        var queue = DispatcherQueue.GetForCurrentThread();
+        if (queue is null)
+        {
+            return;
+        }
+
+        _ = RetryHideFromTaskbarAsync(queue, hWnd);
+    }
+
+    private async Task RetryHideFromTaskbarAsync(DispatcherQueue queue, IntPtr hWnd)
+    {
+        foreach (var delayMs in TaskbarHideRetryMs)
+        {
+            await Task.Delay(delayMs).ConfigureAwait(false);
+            queue.TryEnqueue(() =>
+            {
+                if (_states.ContainsKey(hWnd) && Win32.IsWindow(hWnd))
+                {
+                    HideFromTaskbar(hWnd);
+                }
+            });
+        }
+    }
+
+    private void HideFromTaskbar(IntPtr hWnd)
+    {
+        if (!_states.TryGetValue(hWnd, out var state) || !Win32.IsWindow(hWnd))
+        {
+            return;
+        }
+
+        var list = GetTaskbarList();
+        if (list is null)
+        {
+            return;
+        }
+
+        try
+        {
+            list.DeleteTab(hWnd);
+            state.TaskbarTabRemoved = true;
+            _logger.LogDebug("Removed window {Handle} from the taskbar.", hWnd);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "DeleteTab failed for {Handle}.", hWnd);
+        }
+    }
+
+    private void RestoreTaskbarTab(ManagedWindowState state)
+    {
+        if (!state.TaskbarTabRemoved)
+        {
+            return;
+        }
+
+        var list = GetTaskbarList();
+        if (list is null)
+        {
+            return;
+        }
+
+        try
+        {
+            list.AddTab(state.Handle);
+            state.TaskbarTabRemoved = false;
+            _logger.LogDebug("Restored window {Handle} to the taskbar.", state.Handle);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "AddTab failed for {Handle}.", state.Handle);
+        }
+    }
+
+    private Win32.ITaskbarList? GetTaskbarList()
+    {
+        if (_taskbarListFailed)
+        {
+            return _taskbarList;
+        }
+
+        if (_taskbarList is not null)
+        {
+            return _taskbarList;
+        }
+
+        try
+        {
+            var type = Type.GetTypeFromCLSID(Win32.CLSID_TaskbarList, throwOnError: true);
+            var instance = Activator.CreateInstance(type!) as Win32.ITaskbarList;
+            instance?.HrInit();
+            _taskbarList = instance;
+            if (_taskbarList is null)
+            {
+                _taskbarListFailed = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _taskbarListFailed = true;
+            _logger.LogWarning(ex, "Could not create ITaskbarList; hosted native apps may keep their taskbar buttons.");
+        }
+
+        return _taskbarList;
+    }
 }
 
-internal sealed record ManagedWindowState(IntPtr Handle, Win32.WINDOWPLACEMENT Placement);
+internal sealed class ManagedWindowState
+{
+    public ManagedWindowState(IntPtr handle, Win32.WINDOWPLACEMENT placement)
+    {
+        Handle = handle;
+        Placement = placement;
+    }
+
+    public IntPtr Handle { get; }
+
+    public Win32.WINDOWPLACEMENT Placement { get; }
+
+    public bool TaskbarTabRemoved { get; set; }
+}

@@ -11,7 +11,7 @@ Windows 11, x64:
 - [Latest installer](https://github.com/FreezeAnts/Unison/releases/latest)
 - Product page: [freezeants.com/unison](https://www.freezeants.com/unison/)
 
-Run `Unison-Setup-0.1.0.exe`. Windows may prompt for notification access so sidebar badges can update.
+Run the `Unison-Setup-*.exe` from that release. Windows may prompt for notification access so sidebar badges can update.
 
 No FreezeAnts account or license key is required. Sign-in happens inside each service (Gmail, WhatsApp, and so on). Sessions stay on this PC under `%LocalAppData%\Unison\`.
 
@@ -45,13 +45,16 @@ Open `Unison.sln`, set the platform to **x64**, and press F5.
 
 ## Installer
 
-Inno Setup 6 required:
+Inno Setup 6 required. Each publish **bumps the patch version** in `Unison.csproj` (0.1.0 → 0.1.1) and names the setup exe to match:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass -File installer\build-inno.ps1
+# same version:  -Bump none
+# 0.2.0:         -Bump minor
+# 1.0.0:         -Bump major
 ```
 
-Output: `artifacts\installer\Unison-Setup-0.1.0.exe` (self-contained; not committed).
+Output: `artifacts\installer\Unison-Setup-<version>.exe` (self-contained; not committed). Commit the csproj bump, then attach the exe to a GitHub Release `v<version>`.
 
 ## License
 

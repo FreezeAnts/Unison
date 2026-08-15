@@ -26,6 +26,7 @@ public sealed partial class MainWindow : Window
     private readonly ServiceManager _serviceManager;
     private readonly NotificationManager _notificationManager;
     private readonly AppSettingsStore _settingsStore;
+    private readonly UpdateCheckService _updateCheck;
     private AppSettings _settings;
 
     public Visibility BoolToVisibility(bool value) =>
@@ -73,6 +74,7 @@ public sealed partial class MainWindow : Window
         var store = new ServiceConfigurationStore(loggerFactory.CreateLogger<ServiceConfigurationStore>());
         _settingsStore = new AppSettingsStore(loggerFactory.CreateLogger<AppSettingsStore>());
         _settings = _settingsStore.Load();
+        _updateCheck = new UpdateCheckService(loggerFactory.CreateLogger<UpdateCheckService>());
         var iconLoader = new IconLoader(loggerFactory.CreateLogger<IconLoader>());
 
         ViewModel = new MainViewModel(store, _serviceManager, iconLoader, webViewHost, loggerFactory.CreateLogger<MainViewModel>());
@@ -258,6 +260,7 @@ public sealed partial class MainWindow : Window
             {
                 dispatcher.TryEnqueue(() => ViewModel.ApplyNotificationCounts(counts, latestId, isCall));
             });
+        await TryStartupUpdateCheckAsync();
     }
 
     private async void MainWindow_Closed(object sender, WindowEventArgs args)
@@ -303,6 +306,65 @@ public sealed partial class MainWindow : Window
         await _serviceManager.UpdateHostBoundsAsync(bounds).ConfigureAwait(true);
     }
 
+    private async Task TryStartupUpdateCheckAsync()
+    {
+        if (!_settings.CheckForUpdatesOnStartup)
+        {
+            return;
+        }
+
+        if (!_updateCheck.ShouldCheckOnStartup(_settings.LastUpdateCheckUtc, DateTimeOffset.UtcNow))
+        {
+            return;
+        }
+
+        var result = await _updateCheck.CheckLatestAsync().ConfigureAwait(true);
+        _settings.LastUpdateCheckUtc = DateTimeOffset.UtcNow;
+        _settingsStore.Save(_settings);
+
+        if (!string.IsNullOrWhiteSpace(result.ErrorMessage) || !result.UpdateAvailable)
+        {
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            Title = "Update available",
+            Content = $"Unison {result.LatestVersion} is available (you have {result.CurrentVersion}). Install now? Your services and logins stay on this PC.",
+            PrimaryButtonText = "Install",
+            CloseButtonText = "Later",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        try
+        {
+            var path = await _updateCheck.DownloadInstallerAsync(result, null).ConfigureAwait(true);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            _updateCheck.LaunchInstallerAndExit(path);
+        }
+        catch (Exception)
+        {
+            var failed = new ContentDialog
+            {
+                Title = "Update failed",
+                Content = "Could not download or start the installer. Try Settings → Check for updates.",
+                CloseButtonText = "OK",
+                XamlRoot = Content.XamlRoot
+            };
+            await failed.ShowAsync();
+        }
+    }
+
     private async void AddServiceButton_Click(object sender, RoutedEventArgs e)
     {
         var scanner = new InstalledApplicationScanner(App.LoggerFactory.CreateLogger<InstalledApplicationScanner>());
@@ -330,7 +392,7 @@ public sealed partial class MainWindow : Window
 
     private async void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        var settingsViewModel = new SettingsViewModel(_settings);
+        var settingsViewModel = new SettingsViewModel(_settings, _updateCheck);
         var page = new SettingsPage(settingsViewModel);
         var dialog = new ContentDialog
         {

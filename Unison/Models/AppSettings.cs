@@ -15,6 +15,10 @@ public sealed class AppSettings
 
     public ServiceBarPlacement ServiceBarPlacement { get; set; } = ServiceBarPlacement.Sidebar;
 
+    public bool CheckForUpdatesOnStartup { get; set; } = true;
+
+    public DateTimeOffset? LastUpdateCheckUtc { get; set; }
+
     public void ApplyDefaultsTo(ServiceDefinition definition)
     {
         definition.ShowNotificationBadge = ShowNotificationBadgeByDefault;

@@ -1,3 +1,4 @@
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Unison.ViewModels;
 
@@ -15,4 +16,10 @@ public sealed partial class SettingsPage : UserControl
         ViewModel = viewModel;
         InitializeComponent();
     }
+
+    public bool NotBusy(bool busy) => !busy;
+
+    public bool CanInstall(bool visible, bool busy) => visible && !busy;
+
+    public Visibility ShowIf(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
 }
