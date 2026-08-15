@@ -13,3 +13,8 @@ _pkginfo.txt
 *.msix
 *.msixbundle
 artifacts/
+*.pfx
+*.snk
+.env
+.env.*
+*.usersecrets.json

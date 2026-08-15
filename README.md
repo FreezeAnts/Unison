@@ -1,50 +1,58 @@
 # Unison
 
-Windows 11 communication hub for native apps and web services. A FreezeAnts product.
+Windows 11 communication hub for native apps and web services. A [FreezeAnts](https://www.freezeants.com/unison/) product.
 
-## Prerequisites
+Keep Outlook, Teams, Gmail, WhatsApp, Home Assistant, and other services in one window. Native apps stay real Windows windows. Web apps run in isolated WebView2 profiles.
+
+## Download
+
+Windows 11, x64:
+
+- [Latest installer](https://github.com/FreezeAnts/Unison/releases/latest)
+- Product page: [freezeants.com/unison](https://www.freezeants.com/unison/)
+
+Run `Unison-Setup-0.1.0.exe`. Windows may prompt for notification access so sidebar badges can update.
+
+No FreezeAnts account or license key is required. Sign-in happens inside each service (Gmail, WhatsApp, and so on). Sessions stay on this PC under `%LocalAppData%\Unison\`.
+
+## Features
+
+- Add installed apps (Outlook, Teams, Store WhatsApp) or web services from search, presets, or a custom URL
+- Drag-reorder the sidebar; optional top bar
+- Unread badges from Windows toast notifications
+- Per-service WebView2 profiles (cookies stay separate)
+- Settings: theme, badge defaults, mute other web apps during a call
+- Right-click a service to remove it
+
+## Build from source
+
+Prerequisites:
 
 1. Windows 11
 2. Developer Mode: Settings → System → For developers
-3. Visual Studio 2022 (17.8+) or Visual Studio 2026 with:
-   - .NET desktop development
-   - Windows application development / WinUI application development
-   - Windows SDK 10.0.19041 or newer
-4. .NET 8 SDK (`dotnet --list-sdks`)
-5. Windows App Runtime matching the `Microsoft.WindowsAppSDK` package (1.6). Install the [runtime redistributable](https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/downloads) if the app fails to start.
+3. Visual Studio 2022 (17.8+) or Visual Studio 2026 with .NET desktop development, WinUI / Windows application development, and Windows SDK 10.0.19041 or newer
+4. .NET 8 SDK
+5. Windows App Runtime matching the `Microsoft.WindowsAppSDK` package (1.6) if the unpackaged app fails to start — [runtime redistributable](https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/downloads)
 
 Do not run Visual Studio elevated.
-
-## Build and run
-
-Open `Unison.sln` in Visual Studio, set the platform to **x64**, and press F5.
-
-Or from a terminal:
 
 ```powershell
 dotnet build Unison.sln -c Debug -p:Platform=x64
 dotnet run --project Unison\Unison.csproj -c Debug -p:Platform=x64
 ```
 
+Open `Unison.sln`, set the platform to **x64**, and press F5.
+
 ## Installer
 
-Build a Windows installer (Inno Setup 6 required):
+Inno Setup 6 required:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass -File installer\build-inno.ps1
 ```
 
-The setup exe is written to `artifacts\installer\`. It installs a self-contained Unison build under Program Files (or a per-user folder if you skip elevation).
+Output: `artifacts\installer\Unison-Setup-0.1.0.exe` (self-contained; not committed).
 
-Windows may prompt for notification access so sidebar badges can update.
+## License
 
-## Notification badges
-
-Sidebar badges count Windows toast notifications mapped to a service (Outlook, Teams, Discord, Slack, Gmail, WhatsApp). Selecting a service clears its badge. Messages do not steal focus.
-
-## Web and native hosting
-
-1. **+ Add Service** → add **Gmail** (or another Web item).
-2. Select it. A WebView2 should fill the content area. Sign in; close Unison and reopen — you should still be signed in (`%LocalAppData%\Unison\WebProfiles\`).
-3. Add a second web service. Each should keep its own cookies/session.
-4. Switch to Outlook or Teams. The web view should hide; the native main window should appear. Switching back should show the web view again.
+MIT. See [LICENSE](LICENSE).
