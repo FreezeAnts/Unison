@@ -13,6 +13,7 @@ internal static class Win32
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const int SW_HIDE = 0;
     public const int SW_SHOW = 5;
+    public const int SW_SHOWNA = 8;
     public const int SW_RESTORE = 9;
     public const uint SWP_NOSIZE = 0x0001;
     public const uint SWP_NOMOVE = 0x0002;
@@ -20,6 +21,7 @@ internal static class Win32
     public const uint SWP_NOACTIVATE = 0x0010;
     public const uint SWP_SHOWWINDOW = 0x0040;
     public static readonly IntPtr HWND_TOP = IntPtr.Zero;
+    public static readonly IntPtr HWND_BOTTOM = new(1);
     public static readonly IntPtr HWND_NOTOPMOST = new(-2);
     public const uint GW_OWNER = 4;
     public const int WPF_RESTORETOMAXIMIZED = 0x0002;

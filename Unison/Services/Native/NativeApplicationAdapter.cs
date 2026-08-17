@@ -104,12 +104,11 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
 
         ManagedWindow = handle;
         NativeWindowManager.Remember(handle.Value);
+        NativeWindowManager.Show(handle.Value);
         if (HostBounds.IsValid)
         {
             NativeWindowManager.FitToRect(handle.Value, HostBounds);
         }
-
-        NativeWindowManager.Show(handle.Value);
     }
 
     public string ReadWindowTitle()

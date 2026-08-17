@@ -56,9 +56,19 @@ public sealed class OutlookServiceAdapter : NativeApplicationAdapter
         await Task.CompletedTask.ConfigureAwait(false);
     }
 
+    public override Task DeactivateAsync(CancellationToken cancellationToken = default)
+    {
+        if (ManagedWindow is { } handle)
+        {
+            NativeWindowManager.Conceal(handle);
+        }
+
+        return Task.CompletedTask;
+    }
+
     protected override DiscoveredWindow? RankMainWindow(IReadOnlyList<DiscoveredWindow> windows)
     {
-        var candidates = windows.Where(IsPlausibleMainWindow).ToList();
+        var candidates = windows.Where(IsPlausibleMainWindow).Where(w => !LooksLikeSplashOrDialog(w)).ToList();
         foreach (var candidate in candidates)
         {
             Logger.LogInformation(
@@ -92,12 +102,29 @@ public sealed class OutlookServiceAdapter : NativeApplicationAdapter
             score += 50;
         }
 
+        if (LooksLikeSplashOrDialog(window))
+        {
+            score -= 80;
+        }
+
         if (LooksLikeInspector(window.Title))
         {
             score -= 40;
         }
 
         return score;
+    }
+
+    private static bool LooksLikeSplashOrDialog(DiscoveredWindow window)
+    {
+        var className = window.ClassName ?? string.Empty;
+        var title = window.Title ?? string.Empty;
+        return className.Equals("MsoSplash", StringComparison.OrdinalIgnoreCase)
+            || className.Equals("NUIDialog", StringComparison.OrdinalIgnoreCase)
+            || className.Equals("OpusApp", StringComparison.OrdinalIgnoreCase)
+            || className.Equals("AccountSetupHiddenWindow", StringComparison.OrdinalIgnoreCase)
+            || title.StartsWith("Opening", StringComparison.OrdinalIgnoreCase)
+            || title.Contains("Email Account Setup", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool LooksLikeInspector(string title)

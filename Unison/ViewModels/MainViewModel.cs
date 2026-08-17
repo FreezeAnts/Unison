@@ -85,6 +85,7 @@ public sealed partial class MainViewModel : ObservableObject
         ShowPlaceholder = false;
         PlaceholderText = string.Empty;
         _logger.LogInformation("User selected {ServiceId}.", item.Definition.Id);
+        _toastCounts.Remove(item.Definition.Id);
         try
         {
             await _serviceManager.SelectAsync(item.Definition.Id).ConfigureAwait(true);
@@ -145,6 +146,8 @@ public sealed partial class MainViewModel : ObservableObject
         _logger.LogInformation("Removed service {ServiceId}.", item.Definition.Id);
     }
 
+    public event Action? ActivateRequested;
+
     public bool MuteOthersDuringCalls { get; set; }
 
     public void ApplyNotificationCounts(IReadOnlyDictionary<string, int> counts, string? latestServiceId, bool isCall)
@@ -178,11 +181,14 @@ public sealed partial class MainViewModel : ObservableObject
         var inOtherCall = MuteOthersDuringCalls
             && FindCallServiceId() is { } callId
             && !callId.Equals(target.Definition.Id, StringComparison.OrdinalIgnoreCase);
-        var shouldSwitch = isCall && target.Definition.AutoSwitchOnNotification && !inOtherCall;
+        var shouldSwitch = target.Definition.AutoSwitchOnNotification && !inOtherCall
+            && (SelectedService is null || SelectedService.Definition.Id != target.Definition.Id);
 
         if (shouldSwitch)
         {
-            _logger.LogInformation("Auto-switch is enabled for {ServiceId} (call).", latestServiceId);
+            _logger.LogInformation("Switching to {ServiceId} from notification. Call={IsCall}.", latestServiceId, isCall);
+            ActivateRequested?.Invoke();
+            _ = SelectServiceAsync(target);
         }
         else
         {

@@ -16,6 +16,8 @@ public sealed class NotificationManager
     private Func<IReadOnlyList<ServiceDefinition>> _services = () => [];
     private Action<IReadOnlyDictionary<string, int>, string?, bool>? _onUpdate;
     private UserNotificationListener? _listener;
+    private readonly Dictionary<string, int> _claimed = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<uint> _seenToastIds = [];
 
     public NotificationManager(ILogger<NotificationManager> logger)
     {
@@ -57,6 +59,11 @@ public sealed class NotificationManager
         }
     }
 
+    public void Acknowledge(string serviceId)
+    {
+        _claimed.Remove(serviceId);
+    }
+
     private async void ListenerOnNotificationChanged(UserNotificationListener sender, UserNotificationChangedEventArgs args)
     {
         try
@@ -88,9 +95,11 @@ public sealed class NotificationManager
         }
 
         var services = _services();
-        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var live = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         string? latestServiceId = null;
         var latestIsCall = false;
+        var mapped = 0;
+        var cleared = 0;
 
         foreach (var toast in toasts)
         {
@@ -113,19 +122,47 @@ public sealed class NotificationManager
                 continue;
             }
 
-            counts[serviceId] = counts.GetValueOrDefault(serviceId) + 1;
+            mapped++;
+            live[serviceId] = live.GetValueOrDefault(serviceId) + 1;
             var (title, body) = ReadText(toast);
             latestIsCall = NotificationMapper.LooksLikeCall(title, body);
             latestServiceId = serviceId;
-            _logger.LogDebug(
-                "Mapped notification from {Display} ({Aumid}) to {ServiceId}. Call={IsCall}.",
-                displayName,
-                aumid,
-                serviceId,
-                latestIsCall);
+
+            if (_seenToastIds.Add(toast.Id))
+            {
+                _claimed[serviceId] = _claimed.GetValueOrDefault(serviceId) + 1;
+                if (TryTakeOverToast(aumid))
+                {
+                    cleared++;
+                }
+            }
+        }
+
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in live.Keys.Concat(_claimed.Keys).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            counts[id] = Math.Max(live.GetValueOrDefault(id), _claimed.GetValueOrDefault(id));
         }
 
         _onUpdate?.Invoke(counts, latestServiceId, latestIsCall);
+    }
+
+    private static bool TryTakeOverToast(string aumid)
+    {
+        if (string.IsNullOrWhiteSpace(aumid))
+        {
+            return false;
+        }
+
+        try
+        {
+            ToastNotificationManager.History.Clear(aumid);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static (string Title, string Body) ReadText(UserNotification toast)

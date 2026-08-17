@@ -80,6 +80,12 @@ public sealed partial class MainWindow : Window
 
         ViewModel = new MainViewModel(store, _serviceManager, iconLoader, webViewHost, loggerFactory.CreateLogger<MainViewModel>());
         ViewModel.MuteOthersDuringCalls = _settings.MuteOthersDuringCalls;
+        ViewModel.ActivateRequested += () =>
+        {
+            AppWindow.Show();
+            var hwnd = WindowNative.GetWindowHandle(this);
+            Win32.SetForegroundWindow(hwnd);
+        };
         _serviceManager.HostedWindowTitleChanged += (id, title) =>
         {
             Content.DispatcherQueue.TryEnqueue(() => ViewModel.ApplyHostedTitle(id, title));
@@ -265,6 +271,13 @@ public sealed partial class MainWindow : Window
             {
                 dispatcher.TryEnqueue(() => ViewModel.ApplyNotificationCounts(counts, latestId, isCall));
             });
+        ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ViewModel.SelectedService) && ViewModel.SelectedService is { } selected)
+            {
+                _notificationManager.Acknowledge(selected.Definition.Id);
+            }
+        };
         await TryStartupUpdateCheckAsync();
     }
 

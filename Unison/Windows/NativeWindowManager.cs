@@ -74,6 +74,11 @@ public sealed class NativeWindowManager
             Win32.ShowWindow(hWnd, Win32.SW_RESTORE);
         }
 
+        if (!Win32.IsWindowVisible(hWnd))
+        {
+            Win32.ShowWindow(hWnd, Win32.SW_SHOWNA);
+        }
+
         Win32.SetWindowPos(
             hWnd,
             Win32.HWND_TOP,
@@ -96,6 +101,26 @@ public sealed class NativeWindowManager
         Win32.ShowWindow(hWnd, Win32.SW_HIDE);
     }
 
+    /// <summary>
+    /// Park off-screen instead of SW_HIDE. Classic Outlook's explorer goes blank after hide.
+    /// </summary>
+    public void Conceal(IntPtr hWnd)
+    {
+        if (!Win32.IsWindow(hWnd))
+        {
+            return;
+        }
+
+        Win32.SetWindowPos(
+            hWnd,
+            Win32.HWND_BOTTOM,
+            -32000,
+            -32000,
+            0,
+            0,
+            Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
+    }
+
     public void Show(IntPtr hWnd)
     {
         if (!Win32.IsWindow(hWnd))
@@ -103,7 +128,12 @@ public sealed class NativeWindowManager
             return;
         }
 
-        Win32.ShowWindow(hWnd, Win32.SW_SHOW);
+        if (Win32.IsIconic(hWnd) || Win32.IsZoomed(hWnd))
+        {
+            Win32.ShowWindow(hWnd, Win32.SW_RESTORE);
+        }
+
+        Win32.ShowWindow(hWnd, Win32.SW_SHOWNA);
         Win32.SetWindowPos(
             hWnd,
             Win32.HWND_NOTOPMOST,
@@ -111,7 +141,7 @@ public sealed class NativeWindowManager
             0,
             0,
             0,
-            Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
+            Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE | Win32.SWP_SHOWWINDOW);
         RaiseUnisonThenHosted(hWnd);
         HideFromTaskbarWithRetry(hWnd);
     }

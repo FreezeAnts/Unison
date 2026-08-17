@@ -150,13 +150,13 @@ public sealed class ServiceManager
 
         return definition.Id switch
         {
-            "outlook" => new OutlookServiceAdapter(
+            _ when IsOutlook(definition) => new OutlookServiceAdapter(
                 definition,
                 _windowDiscovery,
                 _nativeWindowManager,
                 _processLocator,
                 _loggerFactory.CreateLogger<OutlookServiceAdapter>()),
-            "teams" => new TeamsServiceAdapter(
+            _ when IsTeams(definition) => new TeamsServiceAdapter(
                 definition,
                 _windowDiscovery,
                 _nativeWindowManager,
@@ -170,6 +170,17 @@ public sealed class ServiceManager
                 _loggerFactory.CreateLogger<GenericNativeServiceAdapter>())
         };
     }
+
+    private static bool IsOutlook(ServiceDefinition definition) =>
+        definition.Id.Contains("outlook", StringComparison.OrdinalIgnoreCase)
+        || definition.Name.Contains("Outlook", StringComparison.OrdinalIgnoreCase)
+        || (definition.ProcessName?.Contains("OUTLOOK", StringComparison.OrdinalIgnoreCase) ?? false);
+
+    private static bool IsTeams(ServiceDefinition definition) =>
+        definition.Id.Equals("teams", StringComparison.OrdinalIgnoreCase)
+        || definition.Name.Contains("Teams", StringComparison.OrdinalIgnoreCase)
+        || (definition.ProcessName?.Contains("ms-teams", StringComparison.OrdinalIgnoreCase) ?? false)
+        || (definition.ProcessName?.Contains("Teams", StringComparison.OrdinalIgnoreCase) ?? false);
 }
 
 /// <summary>

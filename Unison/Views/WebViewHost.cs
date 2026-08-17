@@ -47,31 +47,10 @@ public sealed class WebViewHost : IWebViewHost
 
             view.Visibility = Visibility.Visible;
             _logger.LogInformation("Showing WebView2 for {ServiceId}.", definition.Id);
-            // #region agent log
-            Unison.Windows.DebugSessionLog.Write("A", "WebViewHost.cs:ShowAsync", "WebView shown", new
-            {
-                id = definition.Id,
-                url = definition.Url,
-                hasCore = view.CoreWebView2 is not null,
-                source = view.Source?.ToString(),
-                viewCount = _views.Count,
-                visible = view.Visibility.ToString()
-            });
-            // #endregion
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Could not show WebView2 for {ServiceId}.", definition.Id);
-            // #region agent log
-            Unison.Windows.DebugSessionLog.Write("A", "WebViewHost.cs:ShowAsync", "WebView failed", new
-            {
-                id = definition.Id,
-                url = definition.Url,
-                error = ex.GetType().Name,
-                hresult = ex.HResult,
-                message = ex.Message
-            });
-            // #endregion
             throw;
         }
     }
@@ -132,29 +111,6 @@ public sealed class WebViewHost : IWebViewHost
         var profileFolder = Path.Combine(_profilesRoot, Sanitize(definition.Id));
         Directory.CreateDirectory(profileFolder);
 
-        string? runtimeVersion = null;
-        string? runtimeError = null;
-        try
-        {
-            runtimeVersion = CoreWebView2Environment.GetAvailableBrowserVersionString();
-        }
-        catch (Exception ex)
-        {
-            runtimeError = ex.GetType().Name + ": " + ex.Message;
-        }
-
-        // #region agent log
-        Unison.Windows.DebugSessionLog.Write("B", "WebViewHost.cs:GetOrCreateAsync", "Before CreateAsync", new
-        {
-            id = definition.Id,
-            url = definition.Url,
-            profilesRoot = _profilesRoot,
-            runtimeVersion,
-            runtimeError,
-            existingViews = _views.Count
-        });
-        // #endregion
-
         var webView = new WebView2
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -186,29 +142,6 @@ public sealed class WebViewHost : IWebViewHost
                 "Could not start the in-app browser. Install the Microsoft Edge WebView2 Runtime and try again.",
                 ex);
         }
-        webView.CoreWebView2.ProcessFailed += (_, args) =>
-        {
-            // #region agent log
-            Unison.Windows.DebugSessionLog.Write("C", "WebViewHost.cs:ProcessFailed", "WebView process failed", new
-            {
-                id = definition.Id,
-                kind = args.ProcessFailedKind.ToString(),
-                reason = args.Reason.ToString()
-            });
-            // #endregion
-        };
-        webView.CoreWebView2.NavigationCompleted += (_, args) =>
-        {
-            // #region agent log
-            Unison.Windows.DebugSessionLog.Write("D", "WebViewHost.cs:NavigationCompleted", "Nav done", new
-            {
-                id = definition.Id,
-                success = args.IsSuccess,
-                status = args.HttpStatusCode,
-                source = webView.Source?.ToString()
-            });
-            // #endregion
-        };
         webView.CoreWebView2.ServerCertificateErrorDetected += (_, args) =>
         {
             if (IsLocalOrPrivateHost(uri.Host))
