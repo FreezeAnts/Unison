@@ -101,7 +101,7 @@ public sealed class ServiceConfigurationStore
             Id = "outlook",
             Name = "Outlook",
             ServiceType = ServiceType.NativeApplication,
-            ProcessName = "OUTLOOK",
+            ProcessName = "OUTLOOK,olk,HxOutlook",
             NotificationAppId = "Outlook",
             ShowNotificationBadge = true
         },
@@ -110,7 +110,7 @@ public sealed class ServiceConfigurationStore
             Id = "teams",
             Name = "Teams",
             ServiceType = ServiceType.NativeApplication,
-            ProcessName = "ms-teams",
+            ProcessName = "ms-teams,Teams",
             NotificationAppId = "Teams",
             ShowNotificationBadge = true
         }

@@ -3,59 +3,64 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <StackPanel Spacing="16" MinWidth="360">
-        <TextBlock Text="Appearance" Style="{StaticResource SubtitleTextBlockStyle}" />
-        <ComboBox
-            Header="Theme"
-            HorizontalAlignment="Stretch"
-            ItemsSource="{x:Bind ViewModel.ThemeOptions}"
-            SelectedIndex="{x:Bind ViewModel.ThemeIndex, Mode=TwoWay}" />
-        <ComboBox
-            Header="Service bar"
-            HorizontalAlignment="Stretch"
-            ItemsSource="{x:Bind ViewModel.ServiceBarOptions}"
-            SelectedIndex="{x:Bind ViewModel.ServiceBarIndex, Mode=TwoWay}" />
+    <ScrollViewer
+        MaxHeight="480"
+        VerticalScrollBarVisibility="Auto"
+        HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="16" MinWidth="360" Padding="0,0,8,0">
+            <TextBlock Text="Updates" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <TextBlock Opacity="0.7" Text="{x:Bind ViewModel.CurrentVersionText}" />
+            <ToggleSwitch
+                Header="Check for updates when Unison starts"
+                IsOn="{x:Bind ViewModel.CheckForUpdatesOnStartup, Mode=TwoWay}" />
+            <Button
+                Content="Check for updates"
+                Command="{x:Bind ViewModel.CheckForUpdatesCommand}"
+                IsEnabled="{x:Bind NotBusy(ViewModel.CheckBusy), Mode=OneWay}" />
+            <Button
+                Content="Download and install"
+                Command="{x:Bind ViewModel.InstallUpdateCommand}"
+                Visibility="{x:Bind ShowIf(ViewModel.InstallVisible), Mode=OneWay}"
+                IsEnabled="{x:Bind CanInstall(ViewModel.InstallVisible, ViewModel.CheckBusy), Mode=OneWay}" />
+            <TextBlock
+                Opacity="0.7"
+                TextWrapping="Wrap"
+                Text="{x:Bind ViewModel.UpdateStatus, Mode=OneWay}" />
 
-        <TextBlock Text="Notifications" Style="{StaticResource SubtitleTextBlockStyle}" />
-        <TextBlock
-            Opacity="0.7"
-            TextWrapping="Wrap"
-            Text="These defaults apply to services you add from now on. Existing services keep their current settings." />
-        <ToggleSwitch
-            Header="Show notification badges"
-            IsOn="{x:Bind ViewModel.ShowNotificationBadgeByDefault, Mode=TwoWay}" />
-        <ToggleSwitch
-            Header="Switch to a service on a call notification"
-            OffContent="Badge only"
-            OnContent="Switch on calls"
-            IsOn="{x:Bind ViewModel.AutoSwitchOnCallByDefault, Mode=TwoWay}" />
-        <ToggleSwitch
-            Header="Mute during calls"
-            OffContent="Off"
-            OnContent="Mute other web tabs"
-            IsOn="{x:Bind ViewModel.MuteOthersDuringCalls, Mode=TwoWay}" />
-        <TextBlock
-            Opacity="0.7"
-            TextWrapping="Wrap"
-            Text="When a web service is in a call, other Unison web tabs are muted and hidden. Desktop apps keep their own volume." />
+            <TextBlock Text="Appearance" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <ComboBox
+                Header="Theme"
+                HorizontalAlignment="Stretch"
+                ItemsSource="{x:Bind ViewModel.ThemeOptions}"
+                SelectedIndex="{x:Bind ViewModel.ThemeIndex, Mode=TwoWay}" />
+            <ComboBox
+                Header="Service bar"
+                HorizontalAlignment="Stretch"
+                ItemsSource="{x:Bind ViewModel.ServiceBarOptions}"
+                SelectedIndex="{x:Bind ViewModel.ServiceBarIndex, Mode=TwoWay}" />
 
-        <TextBlock Text="Updates" Style="{StaticResource SubtitleTextBlockStyle}" />
-        <TextBlock Opacity="0.7" Text="{x:Bind ViewModel.CurrentVersionText}" />
-        <ToggleSwitch
-            Header="Check for updates when Unison starts"
-            IsOn="{x:Bind ViewModel.CheckForUpdatesOnStartup, Mode=TwoWay}" />
-        <Button
-            Content="Check for updates"
-            Command="{x:Bind ViewModel.CheckForUpdatesCommand}"
-            IsEnabled="{x:Bind NotBusy(ViewModel.CheckBusy), Mode=OneWay}" />
-        <Button
-            Content="Download and install"
-            Command="{x:Bind ViewModel.InstallUpdateCommand}"
-            Visibility="{x:Bind ShowIf(ViewModel.InstallVisible), Mode=OneWay}"
-            IsEnabled="{x:Bind CanInstall(ViewModel.InstallVisible, ViewModel.CheckBusy), Mode=OneWay}" />
-        <TextBlock
-            Opacity="0.7"
-            TextWrapping="Wrap"
-            Text="{x:Bind ViewModel.UpdateStatus, Mode=OneWay}" />
-    </StackPanel>
+            <TextBlock Text="Notifications" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <TextBlock
+                Opacity="0.7"
+                TextWrapping="Wrap"
+                Text="These defaults apply to services you add from now on. Existing services keep their current settings." />
+            <ToggleSwitch
+                Header="Show notification badges"
+                IsOn="{x:Bind ViewModel.ShowNotificationBadgeByDefault, Mode=TwoWay}" />
+            <ToggleSwitch
+                Header="Switch to a service on a call notification"
+                OffContent="Badge only"
+                OnContent="Switch on calls"
+                IsOn="{x:Bind ViewModel.AutoSwitchOnCallByDefault, Mode=TwoWay}" />
+            <ToggleSwitch
+                Header="Mute during calls"
+                OffContent="Off"
+                OnContent="Mute other web tabs"
+                IsOn="{x:Bind ViewModel.MuteOthersDuringCalls, Mode=TwoWay}" />
+            <TextBlock
+                Opacity="0.7"
+                TextWrapping="Wrap"
+                Text="When a web service is in a call, other Unison web tabs are muted and hidden. Desktop apps keep their own volume." />
+        </StackPanel>
+    </ScrollViewer>
 </UserControl>

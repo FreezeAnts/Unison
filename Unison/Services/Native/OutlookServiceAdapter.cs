@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Unison.Models;
 using Unison.Windows;
@@ -5,8 +6,8 @@ using Unison.Windows;
 namespace Unison.Services.Native;
 
 /// <summary>
-/// Outlook-specific adapter. Manages only the classic Outlook explorer window, not inspectors or pop-outs.
-/// Created by ServiceManager. Uses NativeApplicationAdapter for launch, place, hide, and restore.
+/// Outlook-specific adapter. Manages classic Outlook explorer and New Outlook main windows,
+/// not inspectors or pop-outs. Created by ServiceManager.
 /// </summary>
 public sealed class OutlookServiceAdapter : NativeApplicationAdapter
 {
@@ -20,6 +21,39 @@ public sealed class OutlookServiceAdapter : NativeApplicationAdapter
         ILogger<OutlookServiceAdapter> logger)
         : base(definition, windowDiscovery, nativeWindowManager, processLocator, logger)
     {
+    }
+
+    protected override IReadOnlyList<string> GetProcessNames() =>
+        ["OUTLOOK", "olk", "HxOutlook"];
+
+    public override async Task StartAsync(CancellationToken cancellationToken = default)
+    {
+        var names = GetProcessNames();
+        if (names.Count == 0)
+        {
+            Logger.LogWarning("Service {ServiceId} has no ProcessName.", Definition.Id);
+            return;
+        }
+
+        var running = ProcessLocator.FindByNames(names);
+        if (running.Count == 0)
+        {
+            Logger.LogInformation("No Outlook process running; launching for {ServiceId}.", Definition.Id);
+            TryLaunch();
+        }
+        else
+        {
+            Logger.LogInformation(
+                "Outlook already running ({Count} process(es)); skipping launch for {ServiceId}.",
+                running.Count,
+                Definition.Id);
+            foreach (var process in running)
+            {
+                process.Dispose();
+            }
+        }
+
+        await Task.CompletedTask.ConfigureAwait(false);
     }
 
     protected override DiscoveredWindow? RankMainWindow(IReadOnlyList<DiscoveredWindow> windows)
@@ -45,6 +79,12 @@ public sealed class OutlookServiceAdapter : NativeApplicationAdapter
         if (window.ClassName.Equals(OutlookFrameClass, StringComparison.OrdinalIgnoreCase))
         {
             score += 100;
+        }
+
+        if (window.ClassName.Equals("WinUIDesktopWin32WindowClass", StringComparison.OrdinalIgnoreCase)
+            || window.ClassName.Equals("ApplicationFrameWindow", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 80;
         }
 
         if (window.Title.Contains("Outlook", StringComparison.OrdinalIgnoreCase))

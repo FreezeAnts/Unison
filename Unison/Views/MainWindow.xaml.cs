@@ -69,6 +69,7 @@ public sealed partial class MainWindow : Window
         var processLocator = new ProcessLocator(loggerFactory.CreateLogger<ProcessLocator>());
         var windowDiscovery = new WindowDiscoveryService(processLocator, loggerFactory.CreateLogger<WindowDiscoveryService>());
         var nativeWindowManager = new NativeWindowManager(loggerFactory.CreateLogger<NativeWindowManager>());
+        nativeWindowManager.SetUnisonHost(WindowNative.GetWindowHandle(this));
         var webViewHost = new WebViewHost(WebHost, loggerFactory.CreateLogger<WebViewHost>());
         _serviceManager = new ServiceManager(windowDiscovery, nativeWindowManager, processLocator, webViewHost, loggerFactory);
         var store = new ServiceConfigurationStore(loggerFactory.CreateLogger<ServiceConfigurationStore>());

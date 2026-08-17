@@ -16,11 +16,18 @@ public sealed class NativeWindowManager
     private readonly Dictionary<IntPtr, ManagedWindowState> _states = new();
     private Win32.ITaskbarList? _taskbarList;
     private bool _taskbarListFailed;
+    private IntPtr _unisonHost;
 
     public NativeWindowManager(ILogger<NativeWindowManager> logger)
     {
         _logger = logger;
     }
+
+    /// <summary>
+    /// Unison's main HWND. Set once from MainWindow so hosted apps stay under the chrome geometrically
+    /// while Unison remains near the top of the Z-order stack.
+    /// </summary>
+    public void SetUnisonHost(IntPtr hWnd) => _unisonHost = hWnd;
 
     internal IReadOnlyDictionary<IntPtr, ManagedWindowState> TrackedWindows => _states;
 
@@ -62,19 +69,20 @@ public sealed class NativeWindowManager
             return;
         }
 
-        if (Win32.IsIconic(hWnd))
+        if (Win32.IsIconic(hWnd) || Win32.IsZoomed(hWnd))
         {
             Win32.ShowWindow(hWnd, Win32.SW_RESTORE);
         }
 
         Win32.SetWindowPos(
             hWnd,
-            IntPtr.Zero,
+            Win32.HWND_TOP,
             bounds.Left,
             bounds.Top,
             bounds.Width,
             bounds.Height,
-            Win32.SWP_NOZORDER | Win32.SWP_SHOWWINDOW);
+            Win32.SWP_NOACTIVATE | Win32.SWP_SHOWWINDOW);
+        RaiseUnisonThenHosted(hWnd);
         HideFromTaskbarWithRetry(hWnd);
     }
 
@@ -104,7 +112,26 @@ public sealed class NativeWindowManager
             0,
             0,
             Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
+        RaiseUnisonThenHosted(hWnd);
         HideFromTaskbarWithRetry(hWnd);
+    }
+
+    /// <summary>
+    /// Bring Unison near the top, then the hosted window above it so the pane content is visible
+    /// while the title/service bar (outside the host rect) stays usable.
+    /// </summary>
+    private void RaiseUnisonThenHosted(IntPtr hosted)
+    {
+        const uint flags = Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE;
+        if (_unisonHost != IntPtr.Zero && Win32.IsWindow(_unisonHost))
+        {
+            Win32.SetWindowPos(_unisonHost, Win32.HWND_TOP, 0, 0, 0, 0, flags);
+        }
+
+        if (Win32.IsWindow(hosted))
+        {
+            Win32.SetWindowPos(hosted, Win32.HWND_TOP, 0, 0, 0, 0, flags);
+        }
     }
 
     public void Restore(IntPtr hWnd)
