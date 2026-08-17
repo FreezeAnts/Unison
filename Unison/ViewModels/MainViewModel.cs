@@ -85,7 +85,18 @@ public sealed partial class MainViewModel : ObservableObject
         ShowPlaceholder = false;
         PlaceholderText = string.Empty;
         _logger.LogInformation("User selected {ServiceId}.", item.Definition.Id);
-        await _serviceManager.SelectAsync(item.Definition.Id).ConfigureAwait(true);
+        try
+        {
+            await _serviceManager.SelectAsync(item.Definition.Id).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to select {ServiceId}.", item.Definition.Id);
+            ShowPlaceholder = true;
+            PlaceholderText = item.Definition.ServiceType == ServiceType.WebService
+                ? "This page needs the Microsoft Edge WebView2 Runtime. Re-run the Unison installer, or install WebView2 from Microsoft, then try again."
+                : "Could not open this app in Unison. If it opened in its own window, close that window and try again.";
+        }
         RefreshBadges();
         RefreshCallMute();
     }

@@ -74,6 +74,14 @@ if (Test-Path $publishDir) {
 }
 New-Item -ItemType Directory -Force -Path $publishDir | Out-Null
 
+$webView2Dir = Join-Path $repoRoot "artifacts\webview2"
+$webView2Setup = Join-Path $webView2Dir "MicrosoftEdgeWebview2Setup.exe"
+if (-not (Test-Path $webView2Setup)) {
+    Write-Host "Downloading Microsoft Edge WebView2 Evergreen bootstrapper..."
+    New-Item -ItemType Directory -Force -Path $webView2Dir | Out-Null
+    Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $webView2Setup
+}
+
 dotnet publish $project `
     -c Release `
     -p:Platform=x64 `
@@ -90,7 +98,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "Compiling installer with $iscc ..."
 New-Item -ItemType Directory -Force -Path $installerOut | Out-Null
-& $iscc "/O$installerOut" "/DPublishDir=$publishDir" "/DAppVersion=$version" $iss
+& $iscc "/O$installerOut" "/DPublishDir=$publishDir" "/DAppVersion=$version" "/DWebView2Setup=$webView2Setup" $iss
 if ($LASTEXITCODE -ne 0) {
     throw "ISCC failed."
 }

@@ -164,12 +164,21 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
 
     protected virtual IReadOnlyList<string> GetProcessNames()
     {
-        return string.IsNullOrWhiteSpace(Definition.ProcessName)
-            ? []
+        var names = string.IsNullOrWhiteSpace(Definition.ProcessName)
+            ? new List<string>()
             : Definition.ProcessName
                 .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
+
+        var display = Definition.Name ?? string.Empty;
+        if (display.Contains("Teams", StringComparison.OrdinalIgnoreCase)
+            || names.Any(n => n.Contains("Teams", StringComparison.OrdinalIgnoreCase)))
+        {
+            names.Add("ms-teams");
+            names.Add("Teams");
+        }
+
+        return names.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     protected virtual void TryLaunch()
@@ -232,6 +241,8 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
         if (shellLaunch)
         {
             windows.AddRange(WindowDiscovery.FindWindowsByProcessName("ApplicationFrameHost"));
+            windows.AddRange(WindowDiscovery.FindWindowsByProcessName("msedge"));
+            windows.AddRange(WindowDiscovery.FindWindowsByProcessName("msedgewebview2"));
         }
 
         return windows.DistinctBy(w => w.Handle).ToList();

@@ -6,6 +6,9 @@
 #ifndef PublishDir
   #define PublishDir "..\artifacts\publish"
 #endif
+#ifndef WebView2Setup
+  #define WebView2Setup "..\artifacts\webview2\MicrosoftEdgeWebview2Setup.exe"
+#endif
 #define BrandDir "graphics"
 
 [Setup]
@@ -47,15 +50,30 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#WebView2Setup}"; DestDir: "{tmp}"; DestName: "MicrosoftEdgeWebview2Setup.exe"; Flags: deleteafterinstall; Check: NeedsWebView2
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\Unison.exe"; Comment: "Unison by FreezeAnts"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\Unison.exe"; Tasks: desktopicon; Comment: "Unison by FreezeAnts"
 
 [Run]
+Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Installing Microsoft Edge WebView2..."; Flags: waituntilterminated; Check: NeedsWebView2
 Filename: "{app}\Unison.exe"; Description: "Launch Unison"; Flags: nowait postinstall skipifsilent
 
 [Code]
+const
+  WebView2ClientKey = 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+  WebView2ClientKeyWow = 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+
+function NeedsWebView2: Boolean;
+begin
+  Result := not (
+    RegValueExists(HKLM, WebView2ClientKey, 'pv') or
+    RegValueExists(HKLM, WebView2ClientKeyWow, 'pv') or
+    RegValueExists(HKCU, WebView2ClientKey, 'pv') or
+    RegValueExists(HKCU, WebView2ClientKeyWow, 'pv'));
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep <> usPostUninstall then
