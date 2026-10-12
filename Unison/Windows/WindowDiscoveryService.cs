@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Microsoft.Extensions.Logging;
 
@@ -24,14 +25,28 @@ public sealed class WindowDiscoveryService
         var matches = new List<DiscoveredWindow>();
         foreach (var process in processes)
         {
-            matches.AddRange(FindWindowsForProcess(process.Id));
+            matches.AddRange(FindWindowsForProcess(process.Id, processName));
         }
 
         return matches;
     }
 
-    public IReadOnlyList<DiscoveredWindow> FindWindowsForProcess(int processId)
+    public IReadOnlyList<DiscoveredWindow> FindWindowsForProcess(int processId, string? processName = null)
     {
+        var resolvedName = processName;
+        if (string.IsNullOrWhiteSpace(resolvedName))
+        {
+            try
+            {
+                using var process = Process.GetProcessById(processId);
+                resolvedName = process.ProcessName;
+            }
+            catch
+            {
+                resolvedName = string.Empty;
+            }
+        }
+
         var matches = new List<DiscoveredWindow>();
 
         Win32.EnumWindows((hWnd, _) =>
@@ -42,7 +57,7 @@ public sealed class WindowDiscoveryService
                 return true;
             }
 
-            matches.Add(Describe(hWnd, processId));
+            matches.Add(Describe(hWnd, processId, resolvedName ?? string.Empty));
             return true;
         }, IntPtr.Zero);
 
@@ -50,7 +65,7 @@ public sealed class WindowDiscoveryService
         return matches;
     }
 
-    private static DiscoveredWindow Describe(IntPtr hWnd, int processId)
+    private static DiscoveredWindow Describe(IntPtr hWnd, int processId, string processName)
     {
         var visible = Win32.IsWindowVisible(hWnd);
         var title = GetWindowTitle(hWnd);
@@ -61,7 +76,7 @@ public sealed class WindowDiscoveryService
         Win32.GetWindowRect(hWnd, out var rect);
         var area = Math.Max(0, rect.Width) * Math.Max(0, rect.Height);
 
-        return new DiscoveredWindow(hWnd, processId, title, className, owner, visible, isToolWindow, area);
+        return new DiscoveredWindow(hWnd, processId, processName, title, className, owner, visible, isToolWindow, area);
     }
 
     private static string GetWindowTitle(IntPtr hWnd)
@@ -88,6 +103,7 @@ public sealed class WindowDiscoveryService
 public sealed record DiscoveredWindow(
     IntPtr Handle,
     int ProcessId,
+    string ProcessName,
     string Title,
     string ClassName,
     IntPtr OwnerHandle,

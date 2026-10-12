@@ -283,10 +283,12 @@ public sealed class InstalledApplicationScanner
                 return null;
             }
 
+            var leaf = Path.GetFileNameWithoutExtension(target);
+            var processName = BuildProcessName(leaf, displayName, shellLaunch: false, edgeHosted: IsEdgeExecutable(leaf));
             return new InstalledApplication(
                 displayName,
                 target,
-                Path.GetFileNameWithoutExtension(target),
+                processName,
                 null);
         }
         catch (Exception ex)
@@ -322,14 +324,62 @@ public sealed class InstalledApplicationScanner
             return;
         }
 
-        var processParts = new[]
-        {
-            exe is not null ? Path.GetFileNameWithoutExtension(exe) : null,
-            ContainsWhatsAppToken(packageName) || ContainsWhatsAppToken(displayName) ? "WhatsApp" : null,
-            GuessProcessName(displayName)
-        }.Where(part => !string.IsNullOrWhiteSpace(part)).Distinct(StringComparer.OrdinalIgnoreCase);
-        var processName = string.Join(",", processParts);
+        var shellLaunch = launch.StartsWith("shell:", StringComparison.OrdinalIgnoreCase);
+        var leaf = exe is not null ? Path.GetFileNameWithoutExtension(exe) : null;
+        var edgeHosted = IsEdgeExecutable(leaf)
+            || packageName.Contains("Dialpad", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Dialpad", StringComparison.OrdinalIgnoreCase);
+        var processName = BuildProcessName(
+            leaf,
+            displayName,
+            shellLaunch,
+            edgeHosted,
+            ContainsWhatsAppToken(packageName) || ContainsWhatsAppToken(displayName) ? "WhatsApp" : null);
         byKey.TryAdd(launch, new InstalledApplication(displayName, launch, processName, iconPath));
+    }
+
+    private static bool IsEdgeExecutable(string? leaf) =>
+        leaf is not null
+        && (leaf.Equals("msedge", StringComparison.OrdinalIgnoreCase)
+            || leaf.Equals("msedgewebview2", StringComparison.OrdinalIgnoreCase));
+
+    private static string BuildProcessName(
+        string? executableLeaf,
+        string displayName,
+        bool shellLaunch,
+        bool edgeHosted,
+        string? extraToken = null)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(executableLeaf) && !IsEdgeExecutable(executableLeaf))
+        {
+            parts.Add(executableLeaf);
+        }
+
+        if (!string.IsNullOrWhiteSpace(extraToken))
+        {
+            parts.Add(extraToken);
+        }
+
+        var guessed = GuessProcessName(displayName);
+        if (!string.IsNullOrWhiteSpace(guessed))
+        {
+            parts.Add(guessed);
+        }
+
+        if (shellLaunch || edgeHosted)
+        {
+            parts.Add("ApplicationFrameHost");
+            parts.Add("msedge");
+            parts.Add("msedgewebview2");
+        }
+        else if (IsEdgeExecutable(executableLeaf))
+        {
+            parts.Add(executableLeaf!);
+            parts.Add("msedge");
+        }
+
+        return string.Join(",", parts.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase));
     }
 
     private void AddWhatsAppWindowsAppsFallbacks(Dictionary<string, InstalledApplication> byKey)

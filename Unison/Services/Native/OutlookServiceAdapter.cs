@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Unison.Models;
 using Unison.Windows;
@@ -25,36 +24,6 @@ public sealed class OutlookServiceAdapter : NativeApplicationAdapter
 
     protected override IReadOnlyList<string> GetProcessNames() =>
         ["OUTLOOK", "olk", "HxOutlook"];
-
-    public override async Task StartAsync(CancellationToken cancellationToken = default)
-    {
-        var names = GetProcessNames();
-        if (names.Count == 0)
-        {
-            Logger.LogWarning("Service {ServiceId} has no ProcessName.", Definition.Id);
-            return;
-        }
-
-        var running = ProcessLocator.FindByNames(names);
-        if (running.Count == 0)
-        {
-            Logger.LogInformation("No Outlook process running; launching for {ServiceId}.", Definition.Id);
-            TryLaunch();
-        }
-        else
-        {
-            Logger.LogInformation(
-                "Outlook already running ({Count} process(es)); skipping launch for {ServiceId}.",
-                running.Count,
-                Definition.Id);
-            foreach (var process in running)
-            {
-                process.Dispose();
-            }
-        }
-
-        await Task.CompletedTask.ConfigureAwait(false);
-    }
 
     public override Task DeactivateAsync(CancellationToken cancellationToken = default)
     {

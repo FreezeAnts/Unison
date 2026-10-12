@@ -14,6 +14,18 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
     private static readonly TimeSpan MainWindowTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
 
+    private static readonly HashSet<string> HostProcessNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "ApplicationFrameHost",
+        "msedge",
+        "msedgewebview2"
+    };
+
+    private static readonly HashSet<string> WeakNameTokens = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "app", "application", "desktop", "inc", "llc", "microsoft", "store", "the", "windows"
+    };
+
     protected NativeApplicationAdapter(
         ServiceDefinition definition,
         WindowDiscoveryService windowDiscovery,
@@ -42,12 +54,24 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
 
     protected HostRect HostBounds { get; private set; }
 
+    protected int? LaunchProcessId { get; private set; }
+
+    protected string? PreferredWindowClass { get; private set; }
+
     public virtual async Task StartAsync(CancellationToken cancellationToken = default)
     {
         var names = GetProcessNames();
-        if (names.Count == 0)
+        if (names.Count == 0 && string.IsNullOrWhiteSpace(Definition.ExecutablePath))
         {
-            Logger.LogWarning("Service {ServiceId} has no ProcessName.", Definition.Id);
+            Logger.LogWarning("Service {ServiceId} has no ProcessName or ExecutablePath.", Definition.Id);
+            return;
+        }
+
+        if (IsAlreadyRunning(names))
+        {
+            Logger.LogInformation(
+                "Service {ServiceId} already appears to be running; skipping launch.",
+                Definition.Id);
             return;
         }
 
@@ -58,7 +82,7 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
     public virtual async Task<IntPtr?> FindMainWindowAsync(CancellationToken cancellationToken = default)
     {
         var names = GetProcessNames();
-        if (names.Count == 0)
+        if (names.Count == 0 && LaunchProcessId is null && !UsesHostProcessDiscovery())
         {
             return null;
         }
@@ -72,6 +96,7 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
             var chosen = RankMainWindow(windows);
             if (chosen is not null)
             {
+                PreferredWindowClass = chosen.ClassName;
                 Logger.LogInformation(
                     "Chose main window {Handle} for {ServiceId}: title='{Title}' class='{Class}' area={Area}.",
                     chosen.Handle,
@@ -147,6 +172,8 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
             ManagedWindow = null;
         }
 
+        PreferredWindowClass = null;
+        LaunchProcessId = null;
         return Task.CompletedTask;
     }
 
@@ -182,7 +209,8 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
 
     protected virtual void TryLaunch()
     {
-        var fileName = Definition.ExecutablePath ?? GetProcessNames().FirstOrDefault();
+        LaunchProcessId = null;
+        var fileName = Definition.ExecutablePath ?? GetProcessNames().FirstOrDefault(n => !IsHostProcessName(n));
         if (string.IsNullOrWhiteSpace(fileName))
         {
             Logger.LogWarning("Cannot launch {ServiceId}; no executable or process name.", Definition.Id);
@@ -210,11 +238,22 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
                 return;
             }
 
-            Process.Start(new ProcessStartInfo
+            var started = Process.Start(new ProcessStartInfo
             {
                 FileName = fileName,
                 UseShellExecute = true
             });
+            if (started is not null)
+            {
+                try
+                {
+                    LaunchProcessId = started.Id;
+                }
+                catch (InvalidOperationException)
+                {
+                    LaunchProcessId = null;
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -224,53 +263,249 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
 
     protected virtual DiscoveredWindow? RankMainWindow(IReadOnlyList<DiscoveredWindow> windows)
     {
-        return windows
-            .Where(IsPlausibleMainWindow)
-            .OrderByDescending(w => w.Area)
-            .FirstOrDefault();
-    }
-
-    private List<DiscoveredWindow> CollectCandidateWindows(IReadOnlyList<string> names)
-    {
-        var windows = names
-            .SelectMany(WindowDiscovery.FindWindowsByProcessName)
+        var scored = windows
+            .Select(w => (Window: w, Score: ScoreMainWindow(w)))
+            .Where(x => x.Score > 0 && IsPlausibleMainWindow(x.Window))
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.Window.Area)
             .ToList();
 
-        var shellLaunch = Definition.ExecutablePath?.StartsWith("shell:", StringComparison.OrdinalIgnoreCase) == true;
-        if (shellLaunch)
+        if (scored.Count == 0)
         {
-            windows.AddRange(WindowDiscovery.FindWindowsByProcessName("ApplicationFrameHost"));
-            windows.AddRange(WindowDiscovery.FindWindowsByProcessName("msedge"));
-            windows.AddRange(WindowDiscovery.FindWindowsByProcessName("msedgewebview2"));
+            return null;
         }
 
-        return windows.DistinctBy(w => w.Handle).ToList();
+        var titled = scored.Where(x => TitleMatchesService(x.Window.Title)).ToList();
+        if (titled.Count > 0)
+        {
+            return titled[0].Window;
+        }
+
+        // Never pick a random host (Edge/AFH) window just because it is large.
+        if (scored.All(x => IsHostProcessName(x.Window.ProcessName)))
+        {
+            return null;
+        }
+
+        return scored.First(x => !IsHostProcessName(x.Window.ProcessName)).Window;
     }
 
-    protected bool IsPlausibleMainWindow(DiscoveredWindow window)
+    protected virtual int ScoreMainWindow(DiscoveredWindow window)
     {
-        var name = Definition.Name;
-        var title = window.Title ?? string.Empty;
+        var score = window.Area / 10_000;
+        var titleMatches = TitleMatchesService(window.Title);
         var chrome = window.ClassName.Contains("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase);
         var frame = window.ClassName.Equals("ApplicationFrameWindow", StringComparison.OrdinalIgnoreCase)
             || window.ClassName.Equals("WinUIDesktopWin32WindowClass", StringComparison.OrdinalIgnoreCase);
-        var titleMatches = !string.IsNullOrWhiteSpace(title)
-            && (title.Contains(name, StringComparison.OrdinalIgnoreCase)
-                || title.Contains("Discord", StringComparison.OrdinalIgnoreCase)
-                    && name.Contains("Discord", StringComparison.OrdinalIgnoreCase));
 
-        if ((chrome || frame) && titleMatches && window.Area >= 8_000)
+        if (titleMatches)
         {
-            return true;
+            score += 80;
+        }
+
+        if (window.IsVisible)
+        {
+            score += 20;
+        }
+        else
+        {
+            score -= 30;
+        }
+
+        if (PreferredWindowClass is not null
+            && window.ClassName.Equals(PreferredWindowClass, StringComparison.OrdinalIgnoreCase))
+        {
+            score += 40;
+        }
+
+        if ((chrome || frame) && titleMatches)
+        {
+            score += 40;
+        }
+
+        if (LaunchProcessId is { } pid && window.ProcessId == pid)
+        {
+            score += 50;
+        }
+
+        if (LooksLikeGenericSplash(window))
+        {
+            score -= 100;
+        }
+
+        if (window.IsToolWindow)
+        {
+            score -= 50;
+        }
+
+        if (window.OwnerHandle != IntPtr.Zero)
+        {
+            score -= 40;
+        }
+
+        if (string.IsNullOrWhiteSpace(window.Title) || window.Title.Length < 2)
+        {
+            score -= 60;
         }
 
         if (window.Area < 8_000)
         {
+            score -= 100;
+        }
+
+        // Host windows without a title match are never viable.
+        if (IsHostProcessName(window.ProcessName) && !titleMatches)
+        {
+            return int.MinValue / 4;
+        }
+
+        return score;
+    }
+
+    protected bool IsPlausibleMainWindow(DiscoveredWindow window)
+    {
+        if (window.Area < 8_000 || window.IsToolWindow || window.OwnerHandle != IntPtr.Zero)
+        {
             return false;
         }
 
-        return !window.IsToolWindow
-            && window.OwnerHandle == IntPtr.Zero
-            && !string.IsNullOrWhiteSpace(title);
+        if (LooksLikeGenericSplash(window))
+        {
+            return false;
+        }
+
+        var title = window.Title ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return false;
+        }
+
+        if (IsHostProcessName(window.ProcessName))
+        {
+            return TitleMatchesService(title);
+        }
+
+        var chrome = window.ClassName.Contains("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase);
+        var frame = window.ClassName.Equals("ApplicationFrameWindow", StringComparison.OrdinalIgnoreCase)
+            || window.ClassName.Equals("WinUIDesktopWin32WindowClass", StringComparison.OrdinalIgnoreCase);
+        if ((chrome || frame) && TitleMatchesService(title))
+        {
+            return true;
+        }
+
+        return true;
+    }
+
+    protected bool TitleMatchesService(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return false;
+        }
+
+        foreach (var token in GetNameTokens())
+        {
+            if (title.Contains(token, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected IReadOnlyList<string> GetNameTokens()
+    {
+        var tokens = new List<string>();
+        var name = Definition.Name?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            tokens.Add(name);
+            foreach (var part in name.Split([' ', '-', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (part.Length >= 3 && !WeakNameTokens.Contains(part))
+                {
+                    tokens.Add(part);
+                }
+            }
+        }
+
+        foreach (var processName in GetProcessNames().Where(n => !IsHostProcessName(n)))
+        {
+            if (processName.Length >= 3)
+            {
+                tokens.Add(processName);
+            }
+        }
+
+        return tokens.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    protected static bool IsHostProcessName(string? processName) =>
+        !string.IsNullOrWhiteSpace(processName) && HostProcessNames.Contains(processName);
+
+    protected static bool LooksLikeGenericSplash(DiscoveredWindow window)
+    {
+        var className = window.ClassName ?? string.Empty;
+        var title = window.Title ?? string.Empty;
+        return className.Equals("MsoSplash", StringComparison.OrdinalIgnoreCase)
+            || className.Equals("NUIDialog", StringComparison.OrdinalIgnoreCase)
+            || title.StartsWith("Opening", StringComparison.OrdinalIgnoreCase)
+            || title.Equals("Loading", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsAlreadyRunning(IReadOnlyList<string> names)
+    {
+        var appSpecific = names.Where(n => !IsHostProcessName(n)).ToList();
+        if (appSpecific.Count > 0)
+        {
+            var running = ProcessLocator.FindByNames(appSpecific);
+            var any = running.Count > 0;
+            foreach (var process in running)
+            {
+                process.Dispose();
+            }
+
+            if (any)
+            {
+                return true;
+            }
+        }
+
+        var windows = CollectCandidateWindows(names);
+        return RankMainWindow(windows) is not null;
+    }
+
+    private bool UsesHostProcessDiscovery()
+    {
+        if (Definition.ExecutablePath?.StartsWith("shell:", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return true;
+        }
+
+        return GetProcessNames().Any(IsHostProcessName);
+    }
+
+    private List<DiscoveredWindow> CollectCandidateWindows(IReadOnlyList<string> names)
+    {
+        var searchNames = names.ToList();
+        if (UsesHostProcessDiscovery())
+        {
+            searchNames.Add("ApplicationFrameHost");
+            searchNames.Add("msedge");
+            searchNames.Add("msedgewebview2");
+        }
+
+        var windows = searchNames
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .SelectMany(WindowDiscovery.FindWindowsByProcessName)
+            .ToList();
+
+        if (LaunchProcessId is { } pid)
+        {
+            windows.AddRange(WindowDiscovery.FindWindowsForProcess(pid));
+        }
+
+        return windows.DistinctBy(w => w.Handle).ToList();
     }
 }
