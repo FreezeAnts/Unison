@@ -326,9 +326,12 @@ public sealed class InstalledApplicationScanner
 
         var shellLaunch = launch.StartsWith("shell:", StringComparison.OrdinalIgnoreCase);
         var leaf = exe is not null ? Path.GetFileNameWithoutExtension(exe) : null;
-        var edgeHosted = IsEdgeExecutable(leaf)
-            || packageName.Contains("Dialpad", StringComparison.OrdinalIgnoreCase)
-            || displayName.Contains("Dialpad", StringComparison.OrdinalIgnoreCase);
+        // Only a real Edge executable counts as Edge-hosted. Dialpad ships its own
+        // Electron process (Dialpad.exe); tagging it as Edge-hosted made Unison grab
+        // a random Edge/ApplicationFrameHost window that would not size or paint
+        // like the Dialpad app. Host processes remain a fallback via shellLaunch
+        // and are only searched when the app has no window of its own.
+        var edgeHosted = IsEdgeExecutable(leaf);
         var processName = BuildProcessName(
             leaf,
             displayName,

@@ -92,8 +92,17 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var windows = CollectCandidateWindows(names);
+            // Prefer the app's own process (Dialpad.exe, ms-teams.exe, ...). Only fall
+            // back to host processes (Edge / ApplicationFrameHost) when the app has no
+            // real window of its own, so we never grab a random browser/frame window.
+            var windows = CollectCandidateWindows(names, includeHostProcesses: false);
             var chosen = RankMainWindow(windows);
+            if (chosen is null && UsesHostProcessDiscovery())
+            {
+                windows = CollectCandidateWindows(names, includeHostProcesses: true);
+                chosen = RankMainWindow(windows);
+            }
+
             if (chosen is not null)
             {
                 PreferredWindowClass = chosen.ClassName;
@@ -115,6 +124,9 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
         return null;
     }
 
+    /// <summary>True once a live window has been captured for this service.</summary>
+    public bool HasManagedWindow => ManagedWindow is { } handle && Win32.IsWindow(handle);
+
     public virtual async Task ActivateAsync(CancellationToken cancellationToken = default)
     {
         var handle = ManagedWindow is { } existing && Win32.IsWindow(existing)
@@ -124,7 +136,10 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
         if (handle is null || handle == IntPtr.Zero)
         {
             Logger.LogWarning("Cannot activate {ServiceId}; no main window.", Definition.Id);
-            return;
+            // Throw so the caller can show a failure placeholder instead of a blank pane
+            // while the real app sits in its own window on the desktop.
+            throw new InvalidOperationException(
+                $"Could not capture the {Definition.Name} window. If it opened in its own window, click it in the taskbar once, then select it here again.");
         }
 
         ManagedWindow = handle;
@@ -158,7 +173,9 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
     {
         if (ManagedWindow is { } handle)
         {
-            NativeWindowManager.Hide(handle);
+            // Park off-screen, never SW_HIDE: hidden Chromium/Electron windows
+            // (Teams, Dialpad) come back blank, exactly like classic Outlook.
+            NativeWindowManager.Conceal(handle);
         }
 
         return Task.CompletedTask;
@@ -364,12 +381,24 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
 
     protected bool IsPlausibleMainWindow(DiscoveredWindow window)
     {
-        if (window.Area < 8_000 || window.IsToolWindow || window.OwnerHandle != IntPtr.Zero)
+        if (window.IsCloaked || window.IsToolWindow)
         {
             return false;
         }
 
-        if (LooksLikeGenericSplash(window))
+        // Minimised main windows report a tiny off-screen rect; they are still
+        // capturable because FitToRect restores them before sizing.
+        if (!window.IsMinimized && window.Area < 8_000)
+        {
+            return false;
+        }
+
+        if (window.OwnerHandle != IntPtr.Zero)
+        {
+            return false;
+        }
+
+        if (LooksLikeGenericSplash(window) || LooksLikeAuxiliaryWindow(window.Title))
         {
             return false;
         }
@@ -454,6 +483,21 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
             || title.Equals("Loading", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>Call/notification/meeting pop-outs are never the window to host.</summary>
+    protected static bool LooksLikeAuxiliaryWindow(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return false;
+        }
+
+        return title.Contains("Notification", StringComparison.OrdinalIgnoreCase)
+            || title.Contains("Incoming call", StringComparison.OrdinalIgnoreCase)
+            || title.Contains("Call with", StringComparison.OrdinalIgnoreCase)
+            || title.Contains("Meeting compact", StringComparison.OrdinalIgnoreCase)
+            || title.Contains("Screen sharing", StringComparison.OrdinalIgnoreCase);
+    }
+
     private bool IsAlreadyRunning(IReadOnlyList<string> names)
     {
         var appSpecific = names.Where(n => !IsHostProcessName(n)).ToList();
@@ -472,7 +516,7 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
             }
         }
 
-        var windows = CollectCandidateWindows(names);
+        var windows = CollectCandidateWindows(names, includeHostProcesses: UsesHostProcessDiscovery());
         return RankMainWindow(windows) is not null;
     }
 
@@ -486,10 +530,12 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
         return GetProcessNames().Any(IsHostProcessName);
     }
 
-    private List<DiscoveredWindow> CollectCandidateWindows(IReadOnlyList<string> names)
+    private List<DiscoveredWindow> CollectCandidateWindows(IReadOnlyList<string> names, bool includeHostProcesses)
     {
-        var searchNames = names.ToList();
-        if (UsesHostProcessDiscovery())
+        var searchNames = names
+            .Where(n => includeHostProcesses || !IsHostProcessName(n))
+            .ToList();
+        if (includeHostProcesses)
         {
             searchNames.Add("ApplicationFrameHost");
             searchNames.Add("msedge");

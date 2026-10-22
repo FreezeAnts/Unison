@@ -119,6 +119,13 @@ public sealed class ServiceManager
         {
             _logger.LogInformation("Selection of {ServiceId} was cancelled.", serviceId);
         }
+        catch (InvalidOperationException ex)
+        {
+            // Native window capture failed: surface it so the UI shows a failure
+            // placeholder instead of a blank pane over a separate desktop window.
+            _logger.LogWarning(ex, "Could not host {ServiceId} in the content pane.", serviceId);
+            throw;
+        }
     }
 
     public async Task UpdateHostBoundsAsync(HostRect bounds, CancellationToken cancellationToken = default)

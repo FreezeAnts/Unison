@@ -24,6 +24,7 @@ namespace Unison.Views;
 public sealed partial class MainWindow : Window
 {
     private readonly ServiceManager _serviceManager;
+    private readonly NativeWindowManager _nativeWindowManager;
     private readonly NotificationManager _notificationManager;
     private readonly AppSettingsStore _settingsStore;
     private readonly UpdateCheckService _updateCheck;
@@ -68,7 +69,8 @@ public sealed partial class MainWindow : Window
         var loggerFactory = App.LoggerFactory;
         var processLocator = new ProcessLocator(loggerFactory.CreateLogger<ProcessLocator>());
         var windowDiscovery = new WindowDiscoveryService(processLocator, loggerFactory.CreateLogger<WindowDiscoveryService>());
-        var nativeWindowManager = new NativeWindowManager(loggerFactory.CreateLogger<NativeWindowManager>());
+        _nativeWindowManager = new NativeWindowManager(loggerFactory.CreateLogger<NativeWindowManager>());
+        var nativeWindowManager = _nativeWindowManager;
         nativeWindowManager.SetUnisonHost(WindowNative.GetWindowHandle(this));
         var webViewHost = new WebViewHost(WebHost, loggerFactory.CreateLogger<WebViewHost>());
         _serviceManager = new ServiceManager(windowDiscovery, nativeWindowManager, processLocator, webViewHost, loggerFactory);
@@ -258,6 +260,14 @@ public sealed partial class MainWindow : Window
 
     private async void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
     {
+        if (args.WindowActivationState != WindowActivationState.Deactivated)
+        {
+            // Coming back to the foreground (including restore from minimised):
+            // re-push the pane rect so the hosted native window is re-fitted and
+            // repainted instead of being left parked or at a stale position.
+            _ = PushHostBoundsAsync();
+        }
+
         if (_notificationsStarted || args.WindowActivationState == WindowActivationState.Deactivated)
         {
             return;
@@ -285,6 +295,7 @@ public sealed partial class MainWindow : Window
     {
         _notificationManager.Stop();
         await ViewModel.RestoreOnExitAsync().ConfigureAwait(true);
+        _nativeWindowManager.Dispose();
     }
 
     private async void ContentHost_SizeChanged(object sender, SizeChangedEventArgs e)

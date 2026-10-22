@@ -96,7 +96,9 @@ public sealed partial class MainViewModel : ObservableObject
             ShowPlaceholder = true;
             PlaceholderText = item.Definition.ServiceType == ServiceType.WebService
                 ? "This page needs the Microsoft Edge WebView2 Runtime. Re-run the Unison installer, or install WebView2 from Microsoft, then try again."
-                : "Could not open this app in Unison. If it opened in its own window, close that window and try again.";
+                : ex is InvalidOperationException && !string.IsNullOrWhiteSpace(ex.Message)
+                    ? ex.Message
+                    : "Could not open this app in Unison. If it opened in its own window, use that window, or close it and select the service again.";
         }
         RefreshBadges();
         RefreshCallMute();

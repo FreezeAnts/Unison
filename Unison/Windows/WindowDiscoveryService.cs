@@ -73,10 +73,20 @@ public sealed class WindowDiscoveryService
         var owner = Win32.GetWindow(hWnd, Win32.GW_OWNER);
         var exStyle = Win32.GetWindowLongPtr(hWnd, Win32.GWL_EXSTYLE).ToInt64();
         var isToolWindow = (exStyle & Win32.WS_EX_TOOLWINDOW) != 0;
+        var isCloaked = IsCloaked(hWnd);
+        var isMinimized = Win32.IsIconic(hWnd);
         Win32.GetWindowRect(hWnd, out var rect);
         var area = Math.Max(0, rect.Width) * Math.Max(0, rect.Height);
 
-        return new DiscoveredWindow(hWnd, processId, processName, title, className, owner, visible, isToolWindow, area);
+        return new DiscoveredWindow(hWnd, processId, processName, title, className, owner, visible, isToolWindow, area, isCloaked, isMinimized);
+    }
+
+    private static bool IsCloaked(IntPtr hWnd)
+    {
+        // Non-zero: cloaked by the shell (other virtual desktop, UWP lifecycle, ...).
+        // Cloaked windows must never be hosted; they would show as blank/separate windows.
+        return Win32.DwmGetWindowAttribute(hWnd, Win32.DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0
+            && cloaked != 0;
     }
 
     private static string GetWindowTitle(IntPtr hWnd)
@@ -109,4 +119,6 @@ public sealed record DiscoveredWindow(
     IntPtr OwnerHandle,
     bool IsVisible,
     bool IsToolWindow,
-    int Area);
+    int Area,
+    bool IsCloaked = false,
+    bool IsMinimized = false);

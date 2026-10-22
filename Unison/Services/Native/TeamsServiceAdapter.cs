@@ -48,49 +48,81 @@ public sealed class TeamsServiceAdapter : NativeApplicationAdapter
 
     protected override DiscoveredWindow? RankMainWindow(IReadOnlyList<DiscoveredWindow> windows)
     {
-        var candidates = windows.Where(IsPlausibleMainWindow).Where(w => w.Area >= 80_000).ToList();
+        // IsPlausibleMainWindow already drops cloaked, tool, owned, splash and
+        // call/notification pop-out windows. A minimised main window is allowed
+        // (its rect is tiny) because FitToRect restores it before sizing.
+        var plausible = windows
+            .Where(IsPlausibleMainWindow)
+            .Where(w => LooksLikeMainTeamsWindow(w))
+            .ToList();
+
+        // Prefer the real Electron/WebView main window; fall back to any plausible
+        // large window so a class-name change in a Teams update is not fatal.
+        var preferred = plausible.Where(w => IsTeamsMainClass(w.ClassName)).ToList();
+        var candidates = preferred.Count > 0
+            ? preferred
+            : plausible.Where(w => w.IsMinimized || w.Area >= 80_000).ToList();
+
         foreach (var candidate in candidates)
         {
             Logger.LogInformation(
-                "Teams candidate {Handle}: title='{Title}' class='{Class}' area={Area} score={Score}.",
+                "Teams candidate {Handle}: title='{Title}' class='{Class}' area={Area} visible={Visible} minimized={Minimized} score={Score}.",
                 candidate.Handle,
                 candidate.Title,
                 candidate.ClassName,
                 candidate.Area,
+                candidate.IsVisible,
+                candidate.IsMinimized,
                 Score(candidate));
         }
 
-        return candidates.OrderByDescending(Score).FirstOrDefault();
+        return candidates
+            .OrderByDescending(Score)
+            .ThenByDescending(w => w.Area)
+            .FirstOrDefault();
+    }
+
+    private static bool IsTeamsMainClass(string? className) =>
+        className is not null
+        && (className.Contains("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase)
+            || className.Contains("TeamsWebView", StringComparison.OrdinalIgnoreCase));
+
+    private static bool LooksLikeMainTeamsWindow(DiscoveredWindow window)
+    {
+        if (LooksLikeAuxiliaryWindow(window.Title))
+        {
+            return false;
+        }
+
+        return IsTeamsMainClass(window.ClassName)
+            || window.Title.Contains("Teams", StringComparison.OrdinalIgnoreCase);
     }
 
     private static int Score(DiscoveredWindow window)
     {
         var score = window.Area / 10_000;
         if (window.Title.Contains("Microsoft Teams", StringComparison.OrdinalIgnoreCase)
-            || window.Title.Equals("Teams", StringComparison.OrdinalIgnoreCase))
+            || window.Title.Equals("Teams", StringComparison.OrdinalIgnoreCase)
+            || window.Title.Contains("Teams", StringComparison.OrdinalIgnoreCase))
         {
             score += 50;
         }
 
-        if (window.ClassName.Contains("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase)
-            || window.ClassName.Contains("TeamsWebView", StringComparison.OrdinalIgnoreCase))
+        if (IsTeamsMainClass(window.ClassName))
         {
             score += 30;
         }
 
-        if (LooksLikeAuxiliary(window.Title))
+        if (window.IsVisible)
         {
-            score -= 60;
+            score += 20;
+        }
+        else if (window.IsMinimized)
+        {
+            // Recoverable: FitToRect restores it. Still prefer a visible window.
+            score += 5;
         }
 
         return score;
-    }
-
-    private static bool LooksLikeAuxiliary(string title)
-    {
-        return title.Contains("Notification", StringComparison.OrdinalIgnoreCase)
-            || title.Contains("Call with", StringComparison.OrdinalIgnoreCase)
-            || title.Contains("Meeting compact", StringComparison.OrdinalIgnoreCase)
-            || title.Contains("Incoming call", StringComparison.OrdinalIgnoreCase);
     }
 }

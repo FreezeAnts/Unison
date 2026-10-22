@@ -159,12 +159,12 @@
                 </StackPanel>
             </Grid>
 
+            <!-- Edge-to-edge: a native HWND cannot follow a margin/rounded hole,
+                 so WebView2 and hosted native windows share this exact rectangle. -->
             <Border
                 x:Name="ContentHost"
                 Grid.Column="1"
-                Margin="16"
-                Background="{ThemeResource LayerFillColorDefaultBrush}"
-                CornerRadius="8">
+                Background="{ThemeResource LayerFillColorDefaultBrush}">
                 <Grid>
                     <Grid x:Name="WebHost" />
                     <StackPanel
