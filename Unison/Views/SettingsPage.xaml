@@ -43,14 +43,14 @@
             <TextBlock
                 Opacity="0.7"
                 TextWrapping="Wrap"
-                Text="These defaults apply to services you add from now on. Existing services keep their current settings." />
+                Text="Badge defaults apply to services you add from now on. Auto-switch applies immediately to every mapped service when a toast or call arrives." />
             <ToggleSwitch
                 Header="Show notification badges"
                 IsOn="{x:Bind ViewModel.ShowNotificationBadgeByDefault, Mode=TwoWay}" />
             <ToggleSwitch
-                Header="Switch to a service on a call notification"
+                Header="Switch to that service on notification or call"
                 OffContent="Badge only"
-                OnContent="Switch on calls"
+                OnContent="Switch tab"
                 IsOn="{x:Bind ViewModel.AutoSwitchOnCallByDefault, Mode=TwoWay}" />
             <ToggleSwitch
                 Header="Mute during calls"

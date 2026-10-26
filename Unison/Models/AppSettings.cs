@@ -9,7 +9,11 @@ public sealed class AppSettings
 
     public bool ShowNotificationBadgeByDefault { get; set; } = true;
 
-    public bool AutoSwitchOnCallByDefault { get; set; }
+    /// <summary>
+    /// When true, Unison switches to a mapped service on an incoming-call toast.
+    /// Also seeds <see cref="ServiceDefinition.AutoSwitchOnNotification"/> for newly added services.
+    /// </summary>
+    public bool AutoSwitchOnCallByDefault { get; set; } = true;
 
     public bool MuteOthersDuringCalls { get; set; }
 

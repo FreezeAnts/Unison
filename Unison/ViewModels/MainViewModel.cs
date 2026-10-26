@@ -152,6 +152,12 @@ public sealed partial class MainViewModel : ObservableObject
 
     public bool MuteOthersDuringCalls { get; set; }
 
+    /// <summary>
+    /// App-level toggle from Settings. Call toasts switch for every mapped service when this is on,
+    /// even if that service was added before the setting existed (per-service flag stays a seed for new rows).
+    /// </summary>
+    public bool AutoSwitchOnCallByDefault { get; set; } = true;
+
     public void ApplyNotificationCounts(IReadOnlyDictionary<string, int> counts, string? latestServiceId, bool isCall)
     {
         _toastCounts.Clear();
@@ -169,6 +175,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         RefreshCallMute();
 
+        // latestServiceId is only set for newly seen toasts (see NotificationManager).
         if (latestServiceId is null)
         {
             return;
@@ -183,8 +190,14 @@ public sealed partial class MainViewModel : ObservableObject
         var inOtherCall = MuteOthersDuringCalls
             && FindCallServiceId() is { } callId
             && !callId.Equals(target.Definition.Id, StringComparison.OrdinalIgnoreCase);
-        var shouldSwitch = target.Definition.AutoSwitchOnNotification && !inOtherCall
-            && (SelectedService is null || SelectedService.Definition.Id != target.Definition.Id);
+        var alreadySelected = SelectedService is not null
+            && SelectedService.Definition.Id.Equals(target.Definition.Id, StringComparison.OrdinalIgnoreCase);
+
+        // Settings "Switch on calls" is the live master switch for auto-tab (calls and
+        // other mapped toasts). Per-service AutoSwitchOnNotification still enables it
+        // when the app-level toggle is off (seeded onto newly added services).
+        var allowSwitch = AutoSwitchOnCallByDefault || target.Definition.AutoSwitchOnNotification;
+        var shouldSwitch = allowSwitch && !inOtherCall && !alreadySelected;
 
         if (shouldSwitch)
         {
@@ -194,7 +207,13 @@ public sealed partial class MainViewModel : ObservableObject
         }
         else
         {
-            _logger.LogDebug("Badge-only for {ServiceId}. Call={IsCall}. Not stealing focus.", latestServiceId, isCall);
+            _logger.LogDebug(
+                "Badge-only for {ServiceId}. Call={IsCall} allow={Allow} inOtherCall={InOther} alreadySelected={Selected}.",
+                latestServiceId,
+                isCall,
+                allowSwitch,
+                inOtherCall,
+                alreadySelected);
         }
     }
 

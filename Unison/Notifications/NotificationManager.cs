@@ -7,7 +7,7 @@ namespace Unison.Notifications;
 
 /// <summary>
 /// Listens for Windows toast notifications, maps them to services, and reports badge counts.
-/// Called from MainWindow after launch. Does not steal focus; calls are logged for future auto-switch.
+/// Called from MainWindow after launch. Passes the newest mapped toast so MainViewModel can auto-switch.
 /// </summary>
 public sealed class NotificationManager
 {
@@ -96,8 +96,10 @@ public sealed class NotificationManager
 
         var services = _services();
         var live = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        string? latestServiceId = null;
-        var latestIsCall = false;
+        // Only a newly seen toast should trigger auto-switch. Re-scans of existing
+        // history must not yank the user to another tab.
+        string? newServiceId = null;
+        var newIsCall = false;
         var mapped = 0;
         var cleared = 0;
 
@@ -125,12 +127,18 @@ public sealed class NotificationManager
             mapped++;
             live[serviceId] = live.GetValueOrDefault(serviceId) + 1;
             var (title, body) = ReadText(toast);
-            latestIsCall = NotificationMapper.LooksLikeCall(title, body);
-            latestServiceId = serviceId;
+            var isCall = NotificationMapper.LooksLikeCall(title, body);
 
             if (_seenToastIds.Add(toast.Id))
             {
                 _claimed[serviceId] = _claimed.GetValueOrDefault(serviceId) + 1;
+                // Prefer a call toast if several arrive in one batch.
+                if (newServiceId is null || isCall)
+                {
+                    newServiceId = serviceId;
+                    newIsCall = isCall;
+                }
+
                 if (TryTakeOverToast(aumid))
                 {
                     cleared++;
@@ -144,7 +152,16 @@ public sealed class NotificationManager
             counts[id] = Math.Max(live.GetValueOrDefault(id), _claimed.GetValueOrDefault(id));
         }
 
-        _onUpdate?.Invoke(counts, latestServiceId, latestIsCall);
+        if (newServiceId is not null)
+        {
+            _logger.LogInformation(
+                "New toast for {ServiceId} (call={IsCall}); badges updated for {Count} service(s).",
+                newServiceId,
+                newIsCall,
+                counts.Count);
+        }
+
+        _onUpdate?.Invoke(counts, newServiceId, newIsCall);
     }
 
     private static bool TryTakeOverToast(string aumid)

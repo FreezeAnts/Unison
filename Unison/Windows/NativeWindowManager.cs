@@ -27,9 +27,10 @@ public sealed class NativeWindowManager : IDisposable
     private IntPtr _activeWindow;
     private HostRect _lastBounds;
     private bool _fitting;
-    private bool _refitQueued;
+    private bool _overlaySuspended;
     private bool _disposed;
     private DispatcherQueue? _dispatcherQueue;
+    private DispatcherQueueTimer? _locationDebounceTimer;
 
     // WinEvent plumbing: keep delegates/handles alive for the lifetime of the manager.
     private Win32.WinEventDelegate? _winEventCallback;
@@ -99,6 +100,12 @@ public sealed class NativeWindowManager : IDisposable
             return;
         }
 
+        if (_overlaySuspended)
+        {
+            _lastBounds = bounds;
+            return;
+        }
+
         _lastBounds = bounds;
         if (_states.TryGetValue(hWnd, out var tracked))
         {
@@ -127,7 +134,21 @@ public sealed class NativeWindowManager : IDisposable
 
         ApplyOwnership(hWnd);
 
-        var outer = ComputeOuterRect(hWnd, bounds, out var insets);
+        var outer = ComputeOuterRect(hWnd, bounds, out _);
+        // Skip thrashing SetWindowPos/Rgn when already seated — constant repositioning
+        // steals mouse capture from Electron (Dialpad/Teams) and makes the pane look
+        // alive while clicks/scrolls go nowhere.
+        if (_states.TryGetValue(hWnd, out var existing)
+            && existing.LastOuterRect is { } last
+            && RectsMatch(last, outer)
+            && Win32.GetWindowRect(hWnd, out var current)
+            && RectsMatch(current, last))
+        {
+            RaiseUnisonThenHosted(hWnd);
+            HideFromTaskbarWithRetry(hWnd);
+            return;
+        }
+
         _fitting = true;
         try
         {
@@ -139,7 +160,9 @@ public sealed class NativeWindowManager : IDisposable
                 outer.Width,
                 outer.Height,
                 Win32.SWP_NOACTIVATE | Win32.SWP_SHOWWINDOW);
-            ApplyClipRegion(hWnd, bounds, insets);
+            // Re-read insets after the move — pre-move values are often wrong on first show
+            // and a bad SetWindowRgn makes the app visible but not hit-testable.
+            ApplyClipRegionToHostBounds(hWnd, bounds);
         }
         finally
         {
@@ -148,7 +171,9 @@ public sealed class NativeWindowManager : IDisposable
 
         if (_states.TryGetValue(hWnd, out var state))
         {
-            state.LastOuterRect = outer;
+            // Store the rect we asked for; if the app clamped to a min size the next
+            // LOCATIONCHANGE compare uses this plus GetWindowRect.
+            state.LastOuterRect = Win32.GetWindowRect(hWnd, out var placed) ? placed : outer;
         }
 
         RaiseUnisonThenHosted(hWnd);
@@ -223,10 +248,47 @@ public sealed class NativeWindowManager : IDisposable
         ForceRepaint(hWnd);
     }
 
+    /// <summary>
+    /// Temporarily park the hosted window so a WinUI ContentDialog (drawn inside Unison)
+    /// is not covered by the owned native HWND. Suspends auto-refit: parking itself fires
+    /// LOCATIONCHANGE, which used to immediately FitToRect the app back over the dialog.
+    /// </summary>
+    public void ParkActiveForDialog()
+    {
+        _overlaySuspended = true;
+        CancelDebouncedRefit();
+        if (_activeWindow != IntPtr.Zero && Win32.IsWindow(_activeWindow))
+        {
+            ConcealCore(_activeWindow, keepActive: true);
+        }
+    }
+
+    /// <summary>Undo <see cref="ParkActiveForDialog"/> and seat the hosted window again.</summary>
+    public void ResumeAfterDialog()
+    {
+        _overlaySuspended = false;
+        RefitActive();
+    }
+
+    /// <summary>
+    /// Give the hosted window foreground so Electron/Chromium actually accepts clicks
+    /// and scroll (SWP_NOACTIVATE alone leaves some apps painted but inert).
+    /// </summary>
+    public void FocusActive()
+    {
+        if (_overlaySuspended || _activeWindow == IntPtr.Zero || !Win32.IsWindow(_activeWindow))
+        {
+            return;
+        }
+
+        RaiseUnisonThenHosted(_activeWindow);
+        TrySetForeground(_activeWindow);
+    }
+
     /// <summary>Re-fit the currently hosted window to the last known host bounds.</summary>
     public void RefitActive()
     {
-        if (_activeWindow == IntPtr.Zero || !_lastBounds.IsValid)
+        if (_overlaySuspended || _activeWindow == IntPtr.Zero || !_lastBounds.IsValid)
         {
             return;
         }
@@ -237,8 +299,7 @@ public sealed class NativeWindowManager : IDisposable
             return;
         }
 
-        // The active window is only ever parked by the minimise path, and
-        // FitToRect un-parks it (it parks again itself if Unison is still iconic).
+        // FitToRect clears IsParked and parks again itself if Unison is still iconic.
         FitToRect(_activeWindow, _lastBounds);
     }
 
@@ -417,16 +478,38 @@ public sealed class NativeWindowManager : IDisposable
         return true;
     }
 
-    private static void ApplyClipRegion(IntPtr hWnd, HostRect bounds, FrameInsets insets)
+    /// <summary>
+    /// Clip the hosted HWND to the host pane using post-move geometry. A stale or empty
+    /// region makes Electron apps look fine while eating no mouse input.
+    /// </summary>
+    private void ApplyClipRegionToHostBounds(IntPtr hWnd, HostRect bounds)
     {
-        // Region coordinates are relative to the window's outer top-left. The visible
-        // frame starts at (insets.Left, insets.Top) inside that rect; clip to exactly it
-        // so shadows/borders and min-size overflow never cover Unison's chrome.
-        var region = Win32.CreateRectRgn(
-            insets.Left,
-            insets.Top,
-            insets.Left + bounds.Width,
-            insets.Top + bounds.Height);
+        if (!Win32.GetWindowRect(hWnd, out var outer) || outer.Width <= 0 || outer.Height <= 0)
+        {
+            return;
+        }
+
+        // Host pane in coordinates relative to the window's outer top-left.
+        var left = bounds.Left - outer.Left;
+        var top = bounds.Top - outer.Top;
+        var right = left + bounds.Width;
+        var bottom = top + bounds.Height;
+
+        // Intersect with the window's own client/outer box so we never create an empty region.
+        left = Math.Max(0, left);
+        top = Math.Max(0, top);
+        right = Math.Min(outer.Width, right);
+        bottom = Math.Min(outer.Height, bottom);
+
+        if (right - left < 32 || bottom - top < 32)
+        {
+            // Prefer an unclipped interactive window over a non-hit-testable one.
+            _logger.LogDebug("Skipping clip region for {Handle}; computed region too small.", hWnd);
+            Win32.SetWindowRgn(hWnd, IntPtr.Zero, true);
+            return;
+        }
+
+        var region = Win32.CreateRectRgn(left, top, right, bottom);
         if (region == IntPtr.Zero)
         {
             return;
@@ -436,6 +519,18 @@ public sealed class NativeWindowManager : IDisposable
         if (Win32.SetWindowRgn(hWnd, region, true) == 0)
         {
             Win32.DeleteObject(region);
+        }
+    }
+
+    private void TrySetForeground(IntPtr hWnd)
+    {
+        try
+        {
+            Win32.SetForegroundWindow(hWnd);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "SetForegroundWindow failed for {Handle}.", hWnd);
         }
     }
 
@@ -487,7 +582,7 @@ public sealed class NativeWindowManager : IDisposable
 
     private void OnWinEvent(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint eventThread, uint eventTime)
     {
-        if (_disposed || _fitting || hwnd == IntPtr.Zero)
+        if (_disposed || _fitting || _overlaySuspended || hwnd == IntPtr.Zero)
         {
             return;
         }
@@ -509,11 +604,16 @@ public sealed class NativeWindowManager : IDisposable
 
         if (eventType == Win32.EVENT_SYSTEM_MINIMIZEEND && hwnd == _unisonHost)
         {
-            QueueRefit();
+            QueueDebouncedRefit();
             return;
         }
 
         if (eventType != Win32.EVENT_OBJECT_LOCATIONCHANGE || hwnd != _activeWindow || !_lastBounds.IsValid)
+        {
+            return;
+        }
+
+        if (_states.TryGetValue(hwnd, out var parked) && parked.IsParked)
         {
             return;
         }
@@ -539,18 +639,18 @@ public sealed class NativeWindowManager : IDisposable
             return;
         }
 
-        QueueRefit();
+        QueueDebouncedRefit();
     }
 
     private static bool RectsMatch(Win32.RECT a, Win32.RECT b) =>
-        Math.Abs(a.Left - b.Left) <= 1
-        && Math.Abs(a.Top - b.Top) <= 1
-        && Math.Abs(a.Width - b.Width) <= 1
-        && Math.Abs(a.Height - b.Height) <= 1;
+        Math.Abs(a.Left - b.Left) <= 2
+        && Math.Abs(a.Top - b.Top) <= 2
+        && Math.Abs(a.Width - b.Width) <= 2
+        && Math.Abs(a.Height - b.Height) <= 2;
 
-    private void QueueRefit()
+    private void QueueDebouncedRefit()
     {
-        if (_refitQueued || _disposed)
+        if (_disposed || _overlaySuspended)
         {
             return;
         }
@@ -562,15 +662,29 @@ public sealed class NativeWindowManager : IDisposable
             return;
         }
 
-        _refitQueued = true;
-        queue.TryEnqueue(() =>
+        // Debounce: Electron fires LOCATIONCHANGE very often while scrolling/animating.
+        // Immediate SetWindowPos mid-gesture steals capture and freezes input.
+        if (_locationDebounceTimer is null)
         {
-            _refitQueued = false;
-            if (!_disposed)
+            _locationDebounceTimer = queue.CreateTimer();
+            _locationDebounceTimer.Interval = TimeSpan.FromMilliseconds(200);
+            _locationDebounceTimer.IsRepeating = false;
+            _locationDebounceTimer.Tick += (_, _) =>
             {
-                RefitActive();
-            }
-        });
+                if (!_disposed && !_overlaySuspended)
+                {
+                    RefitActive();
+                }
+            };
+        }
+
+        _locationDebounceTimer.Stop();
+        _locationDebounceTimer.Start();
+    }
+
+    private void CancelDebouncedRefit()
+    {
+        _locationDebounceTimer?.Stop();
     }
 
     public void Dispose()
@@ -581,6 +695,8 @@ public sealed class NativeWindowManager : IDisposable
         }
 
         _disposed = true;
+        CancelDebouncedRefit();
+        _locationDebounceTimer = null;
         if (_locationHook != IntPtr.Zero)
         {
             Win32.UnhookWinEvent(_locationHook);

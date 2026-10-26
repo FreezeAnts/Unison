@@ -82,6 +82,7 @@ public sealed partial class MainWindow : Window
 
         ViewModel = new MainViewModel(store, _serviceManager, iconLoader, webViewHost, loggerFactory.CreateLogger<MainViewModel>());
         ViewModel.MuteOthersDuringCalls = _settings.MuteOthersDuringCalls;
+        ViewModel.AutoSwitchOnCallByDefault = _settings.AutoSwitchOnCallByDefault;
         ViewModel.ActivateRequested += () =>
         {
             AppWindow.Show();
@@ -257,14 +258,16 @@ public sealed partial class MainWindow : Window
     }
 
     private bool _notificationsStarted;
+    private bool _dialogOpen;
 
     private async void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
     {
-        if (args.WindowActivationState != WindowActivationState.Deactivated)
+        if (args.WindowActivationState != WindowActivationState.Deactivated && !_dialogOpen)
         {
             // Coming back to the foreground (including restore from minimised):
             // re-push the pane rect so the hosted native window is re-fitted and
             // repainted instead of being left parked or at a stale position.
+            // Skip while a ContentDialog is open — refitting would cover the dialog.
             _ = PushHostBoundsAsync();
         }
 
@@ -305,15 +308,45 @@ public sealed partial class MainWindow : Window
 
     private async void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args)
     {
+        if (_dialogOpen)
+        {
+            return;
+        }
+
         if (args.DidPositionChange || args.DidSizeChange)
         {
             await PushHostBoundsAsync();
         }
     }
 
+    /// <summary>
+    /// Hosted native windows sit above Unison as owned top-level HWNDs, so a ContentDialog
+    /// drawn inside Unison would open behind them. Park the hosted window for the dialog,
+    /// then re-fit when it closes.
+    /// </summary>
+    private async Task<ContentDialogResult> ShowContentDialogAsync(ContentDialog dialog)
+    {
+        dialog.XamlRoot ??= Content.XamlRoot;
+        _dialogOpen = true;
+        // Must suspend auto-refit before parking: the off-screen move fires
+        // LOCATIONCHANGE, which previously FitToRect'd Dialpad straight back over the dialog.
+        _nativeWindowManager.ParkActiveForDialog();
+        try
+        {
+            return await dialog.ShowAsync();
+        }
+        finally
+        {
+            _dialogOpen = false;
+            _nativeWindowManager.ResumeAfterDialog();
+            await PushHostBoundsAsync().ConfigureAwait(true);
+            _nativeWindowManager.FocusActive();
+        }
+    }
+
     private async Task PushHostBoundsAsync()
     {
-        if (ContentHost.XamlRoot is null)
+        if (_dialogOpen || ContentHost.XamlRoot is null)
         {
             return;
         }
@@ -379,11 +412,10 @@ public sealed partial class MainWindow : Window
             Content = $"Unison {result.LatestVersion} is available (you have {result.CurrentVersion}). Install now? Your services and logins stay on this PC.",
             PrimaryButtonText = "Install",
             CloseButtonText = "Later",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = Content.XamlRoot
+            DefaultButton = ContentDialogButton.Primary
         };
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await ShowContentDialogAsync(dialog) != ContentDialogResult.Primary)
         {
             return;
         }
@@ -404,10 +436,9 @@ public sealed partial class MainWindow : Window
             {
                 Title = "Update failed",
                 Content = "Could not download or start the installer. Try Settings → Check for updates.",
-                CloseButtonText = "OK",
-                XamlRoot = Content.XamlRoot
+                CloseButtonText = "OK"
             };
-            await failed.ShowAsync();
+            await ShowContentDialogAsync(failed);
         }
     }
 
@@ -422,8 +453,7 @@ public sealed partial class MainWindow : Window
         {
             Title = "Add Service",
             Content = page,
-            CloseButtonText = "Close",
-            XamlRoot = Content.XamlRoot
+            CloseButtonText = "Close"
         };
 
         addViewModel.ServiceChosen += async (_, definition) =>
@@ -433,7 +463,7 @@ public sealed partial class MainWindow : Window
             await Task.CompletedTask;
         };
 
-        await dialog.ShowAsync();
+        await ShowContentDialogAsync(dialog);
     }
 
     private async void SettingsButton_Click(object sender, RoutedEventArgs e)
@@ -446,11 +476,10 @@ public sealed partial class MainWindow : Window
             Content = page,
             PrimaryButtonText = "Save",
             CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = Content.XamlRoot
+            DefaultButton = ContentDialogButton.Primary
         };
 
-        var result = await dialog.ShowAsync();
+        var result = await ShowContentDialogAsync(dialog);
         if (result != ContentDialogResult.Primary)
         {
             return;
@@ -459,6 +488,7 @@ public sealed partial class MainWindow : Window
         _settings = settingsViewModel.ToSettings();
         _settingsStore.Save(_settings);
         ViewModel.MuteOthersDuringCalls = _settings.MuteOthersDuringCalls;
+        ViewModel.AutoSwitchOnCallByDefault = _settings.AutoSwitchOnCallByDefault;
         ViewModel.RefreshCallMute();
         ApplyTheme(_settings.Theme);
         ApplyServiceBarLayout();
@@ -484,11 +514,10 @@ public sealed partial class MainWindow : Window
             Content = $"Remove {item.Name} from Unison?",
             PrimaryButtonText = "Remove",
             CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = Content.XamlRoot
+            DefaultButton = ContentDialogButton.Close
         };
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await ShowContentDialogAsync(dialog) != ContentDialogResult.Primary)
         {
             return;
         }
@@ -510,6 +539,10 @@ public sealed partial class MainWindow : Window
         {
             await ViewModel.SelectServiceCommand.ExecuteAsync(item);
             await PushHostBoundsAsync();
+            if (item.Definition.ServiceType == ServiceType.NativeApplication)
+            {
+                _nativeWindowManager.FocusActive();
+            }
         }
     }
 }

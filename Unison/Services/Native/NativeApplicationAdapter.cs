@@ -149,6 +149,9 @@ public abstract class NativeApplicationAdapter : IServiceAdapter
         {
             NativeWindowManager.FitToRect(handle.Value, HostBounds);
         }
+
+        // Electron (Dialpad/Teams) often paints while ignoring input until foregrounded.
+        NativeWindowManager.FocusActive();
     }
 
     public string ReadWindowTitle()
