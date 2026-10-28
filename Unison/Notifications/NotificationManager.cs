@@ -8,6 +8,7 @@ namespace Unison.Notifications;
 /// <summary>
 /// Listens for Windows toast notifications, maps them to services, and reports badge counts.
 /// Called from MainWindow after launch. Passes the newest mapped toast so MainViewModel can auto-switch.
+/// Does not clear Action Center history — clearing raced the listener and dropped switch/badge updates.
 /// </summary>
 public sealed class NotificationManager
 {
@@ -18,11 +19,25 @@ public sealed class NotificationManager
     private UserNotificationListener? _listener;
     private readonly Dictionary<string, int> _claimed = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<uint> _seenToastIds = [];
+    private readonly HashSet<uint> _ignoredForBadge = [];
+    private readonly Dictionary<uint, string> _toastService = [];
+    private bool _accessDenied;
 
     public NotificationManager(ILogger<NotificationManager> logger)
     {
         _logger = logger;
     }
+
+    /// <summary>True when Windows denied Unison access to toast history.</summary>
+    public bool AccessDenied => _accessDenied;
+
+    /// <summary>Human-readable access status for Settings.</summary>
+    public string AccessStatusText =>
+        _accessDenied
+            ? "Allow Unison in Windows Settings → System → Notifications so badges and auto-switch can work."
+            : (_listener is null
+                ? "Notification listener is not running."
+                : "Listening for Windows toast notifications.");
 
     public async Task StartAsync(
         Func<IReadOnlyList<ServiceDefinition>> services,
@@ -30,6 +45,7 @@ public sealed class NotificationManager
     {
         _services = services;
         _onUpdate = onUpdate;
+        _accessDenied = false;
 
         try
         {
@@ -37,6 +53,7 @@ public sealed class NotificationManager
             var access = await _listener.RequestAccessAsync();
             if (access != UserNotificationListenerAccessStatus.Allowed)
             {
+                _accessDenied = true;
                 _logger.LogWarning("Notification access is {Access}. Badges will stay at zero until access is granted.", access);
                 return;
             }
@@ -47,6 +64,7 @@ public sealed class NotificationManager
         }
         catch (Exception ex)
         {
+            _accessDenied = true;
             _logger.LogError(ex, "Could not start UserNotificationListener. Unpackaged apps may need notification access in Windows settings.");
         }
     }
@@ -59,9 +77,21 @@ public sealed class NotificationManager
         }
     }
 
+    /// <summary>
+    /// User opened this service tab: clear its claimed count and ignore currently visible
+    /// toasts for badge purposes so Action Center leftovers do not revive the bubble.
+    /// New toasts after this still count and can auto-switch.
+    /// </summary>
     public void Acknowledge(string serviceId)
     {
         _claimed.Remove(serviceId);
+        foreach (var pair in _toastService.ToList())
+        {
+            if (pair.Value.Equals(serviceId, StringComparison.OrdinalIgnoreCase))
+            {
+                _ignoredForBadge.Add(pair.Key);
+            }
+        }
     }
 
     private async void ListenerOnNotificationChanged(UserNotificationListener sender, UserNotificationChangedEventArgs args)
@@ -96,12 +126,12 @@ public sealed class NotificationManager
 
         var services = _services();
         var live = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var liveToastIds = new HashSet<uint>();
         // Only a newly seen toast should trigger auto-switch. Re-scans of existing
         // history must not yank the user to another tab.
         string? newServiceId = null;
         var newIsCall = false;
         var mapped = 0;
-        var cleared = 0;
 
         foreach (var toast in toasts)
         {
@@ -125,27 +155,48 @@ public sealed class NotificationManager
             }
 
             mapped++;
-            live[serviceId] = live.GetValueOrDefault(serviceId) + 1;
+            liveToastIds.Add(toast.Id);
+            _toastService[toast.Id] = serviceId;
+
             var (title, body) = ReadText(toast);
             var isCall = NotificationMapper.LooksLikeCall(title, body);
+            var isNew = _seenToastIds.Add(toast.Id);
 
-            if (_seenToastIds.Add(toast.Id))
+            if (isNew)
             {
+                // Brand-new toasts always count for badges, even if this service was acknowledged.
+                _ignoredForBadge.Remove(toast.Id);
                 _claimed[serviceId] = _claimed.GetValueOrDefault(serviceId) + 1;
-                // Prefer a call toast if several arrive in one batch.
                 if (newServiceId is null || isCall)
                 {
                     newServiceId = serviceId;
                     newIsCall = isCall;
                 }
 
-                if (TryTakeOverToast(aumid))
-                {
-                    cleared++;
-                }
+                _logger.LogInformation(
+                    "Mapped toast {ToastId} from '{Display}' / '{Aumid}' → {ServiceId} (call={IsCall}).",
+                    toast.Id,
+                    displayName,
+                    aumid,
+                    serviceId,
+                    isCall);
+            }
+
+            if (!_ignoredForBadge.Contains(toast.Id))
+            {
+                live[serviceId] = live.GetValueOrDefault(serviceId) + 1;
             }
         }
 
+        // Drop tracking for toasts that left Action Center.
+        foreach (var id in _toastService.Keys.Where(id => !liveToastIds.Contains(id)).ToList())
+        {
+            _toastService.Remove(id);
+            _ignoredForBadge.Remove(id);
+        }
+
+        // Live Action Center count (minus acknowledged) is authoritative while toasts remain;
+        // claimed is a floor after the user dismisses them from Action Center.
         var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var id in live.Keys.Concat(_claimed.Keys).Distinct(StringComparer.OrdinalIgnoreCase))
         {
@@ -155,31 +206,14 @@ public sealed class NotificationManager
         if (newServiceId is not null)
         {
             _logger.LogInformation(
-                "New toast for {ServiceId} (call={IsCall}); badges updated for {Count} service(s).",
+                "New toast for {ServiceId} (call={IsCall}); badges updated for {Count} service(s), mapped={Mapped}.",
                 newServiceId,
                 newIsCall,
-                counts.Count);
+                counts.Count,
+                mapped);
         }
 
         _onUpdate?.Invoke(counts, newServiceId, newIsCall);
-    }
-
-    private static bool TryTakeOverToast(string aumid)
-    {
-        if (string.IsNullOrWhiteSpace(aumid))
-        {
-            return false;
-        }
-
-        try
-        {
-            ToastNotificationManager.History.Clear(aumid);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private static (string Title, string Body) ReadText(UserNotification toast)

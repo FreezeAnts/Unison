@@ -66,6 +66,12 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private bool _checkBusy;
 
+    [ObservableProperty]
+    private string _notificationAccessText = "";
+
+    [ObservableProperty]
+    private bool _notificationAccessDenied;
+
     public AppSettings ToSettings() => new()
     {
         Theme = ThemeIndex switch

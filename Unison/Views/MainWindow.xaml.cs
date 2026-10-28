@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.UI;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -259,6 +260,7 @@ public sealed partial class MainWindow : Window
 
     private bool _notificationsStarted;
     private bool _dialogOpen;
+    private DispatcherQueueTimer? _titlePollTimer;
 
     private async void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
     {
@@ -284,18 +286,41 @@ public sealed partial class MainWindow : Window
             {
                 dispatcher.TryEnqueue(() => ViewModel.ApplyNotificationCounts(counts, latestId, isCall));
             });
-        ViewModel.PropertyChanged += (_, args) =>
+        ViewModel.PropertyChanged += (_, propertyArgs) =>
         {
-            if (args.PropertyName == nameof(ViewModel.SelectedService) && ViewModel.SelectedService is { } selected)
+            if (propertyArgs.PropertyName == nameof(ViewModel.SelectedService) && ViewModel.SelectedService is { } selected)
             {
                 _notificationManager.Acknowledge(selected.Definition.Id);
             }
         };
+        StartNativeTitlePoll();
         await TryStartupUpdateCheckAsync();
+    }
+
+    private void StartNativeTitlePoll()
+    {
+        if (_titlePollTimer is not null)
+        {
+            return;
+        }
+
+        _titlePollTimer = Content.DispatcherQueue.CreateTimer();
+        _titlePollTimer.Interval = TimeSpan.FromSeconds(3);
+        _titlePollTimer.IsRepeating = true;
+        _titlePollTimer.Tick += (_, _) =>
+        {
+            if (!_dialogOpen)
+            {
+                ViewModel.PollNativeTitles();
+            }
+        };
+        _titlePollTimer.Start();
     }
 
     private async void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        _titlePollTimer?.Stop();
+        _titlePollTimer = null;
         _notificationManager.Stop();
         await ViewModel.RestoreOnExitAsync().ConfigureAwait(true);
         _nativeWindowManager.Dispose();
@@ -468,7 +493,11 @@ public sealed partial class MainWindow : Window
 
     private async void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        var settingsViewModel = new SettingsViewModel(_settings, _updateCheck);
+        var settingsViewModel = new SettingsViewModel(_settings, _updateCheck)
+        {
+            NotificationAccessText = _notificationManager.AccessStatusText,
+            NotificationAccessDenied = _notificationManager.AccessDenied
+        };
         var page = new SettingsPage(settingsViewModel);
         var dialog = new ContentDialog
         {

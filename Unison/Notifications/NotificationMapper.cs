@@ -5,6 +5,7 @@ namespace Unison.Notifications;
 /// <summary>
 /// Maps a Windows toast to a configured Unison service using name, process, and URL host.
 /// Called by NotificationManager. Does not use a hardcoded service-id table.
+/// Mapping is independent of ShowNotificationBadge so auto-switch still works when badges are off.
 /// </summary>
 public sealed class NotificationMapper
 {
@@ -13,27 +14,110 @@ public sealed class NotificationMapper
         string displayName,
         IReadOnlyList<ServiceDefinition> services)
     {
+        string? bestId = null;
+        var bestScore = 0;
+
         foreach (var service in services)
         {
-            if (!service.ShowNotificationBadge)
+            var score = ScoreMatch(appUserModelId, displayName, service);
+            if (score > bestScore)
             {
-                continue;
-            }
-
-            if (!string.IsNullOrWhiteSpace(service.NotificationAppId)
-                && appUserModelId.Contains(service.NotificationAppId, StringComparison.OrdinalIgnoreCase))
-            {
-                return service.Id;
-            }
-
-            if (Matches(appUserModelId, service) || Matches(displayName, service))
-            {
-                return service.Id;
+                bestScore = score;
+                bestId = service.Id;
             }
         }
 
-        return null;
+        return bestScore > 0 ? bestId : null;
     }
+
+    private static int ScoreMatch(string appUserModelId, string displayName, ServiceDefinition service)
+    {
+        var score = 0;
+
+        if (!string.IsNullOrWhiteSpace(service.NotificationAppId))
+        {
+            if (ContainsToken(appUserModelId, service.NotificationAppId)
+                || ContainsToken(displayName, service.NotificationAppId))
+            {
+                score = Math.Max(score, 100);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(service.Name))
+        {
+            if (ContainsToken(displayName, service.Name))
+            {
+                score = Math.Max(score, 90);
+            }
+
+            if (ContainsToken(appUserModelId, service.Name))
+            {
+                score = Math.Max(score, 80);
+            }
+
+            foreach (var part in service.Name.Split([' ', '-', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (part.Length >= 3
+                    && (ContainsToken(displayName, part) || ContainsToken(appUserModelId, part)))
+                {
+                    score = Math.Max(score, 60);
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(service.ProcessName))
+        {
+            foreach (var part in service.ProcessName.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (IsWeakHostToken(part))
+                {
+                    continue;
+                }
+
+                if (part.Length >= 3
+                    && (ContainsToken(appUserModelId, part) || ContainsToken(displayName, part)))
+                {
+                    score = Math.Max(score, 70);
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(service.Url)
+            && Uri.TryCreate(service.Url, UriKind.Absolute, out var uri)
+            && !string.IsNullOrWhiteSpace(uri.Host))
+        {
+            var host = uri.Host.Replace("www.", "", StringComparison.OrdinalIgnoreCase);
+            if (ContainsToken(appUserModelId, host) || ContainsToken(displayName, host))
+            {
+                score = Math.Max(score, 65);
+            }
+
+            var label = host.Split('.')[0];
+            if (label.Length >= 3
+                && (ContainsToken(appUserModelId, label) || ContainsToken(displayName, label)))
+            {
+                score = Math.Max(score, 55);
+            }
+        }
+
+        return score;
+    }
+
+    private static bool ContainsToken(string haystack, string token)
+    {
+        if (string.IsNullOrWhiteSpace(haystack) || string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        return haystack.Contains(token, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsWeakHostToken(string part) =>
+        part.Equals("ApplicationFrameHost", StringComparison.OrdinalIgnoreCase)
+        || part.Equals("msedge", StringComparison.OrdinalIgnoreCase)
+        || part.Equals("msedgewebview2", StringComparison.OrdinalIgnoreCase)
+        || part.Equals("app", StringComparison.OrdinalIgnoreCase);
 
     public static bool LooksLikeCall(string title, string body)
     {
@@ -108,7 +192,8 @@ public sealed class NotificationMapper
             || HasWord(text, "call")
             || HasWord(text, "calling")
             || HasWord(text, "meet")
-            || HasWord(text, "meeting");
+            || HasWord(text, "meeting")
+            || HasWord(text, "ringing");
     }
 
     private static bool HasWord(string text, string word)
@@ -136,46 +221,16 @@ public sealed class NotificationMapper
         return false;
     }
 
-    private static bool Matches(string haystack, ServiceDefinition service)
+    /// <summary>Seed NotificationAppId from the service display name when missing.</summary>
+    public static bool TryBackfillNotificationAppId(ServiceDefinition definition)
     {
-        if (string.IsNullOrWhiteSpace(haystack))
+        if (!string.IsNullOrWhiteSpace(definition.NotificationAppId)
+            || string.IsNullOrWhiteSpace(definition.Name))
         {
             return false;
         }
 
-        if (haystack.Contains(service.Name, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (!string.IsNullOrWhiteSpace(service.ProcessName))
-        {
-            foreach (var part in service.ProcessName.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                if (part.Length >= 3 && haystack.Contains(part, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(service.Url)
-            && Uri.TryCreate(service.Url, UriKind.Absolute, out var uri)
-            && !string.IsNullOrWhiteSpace(uri.Host))
-        {
-            var host = uri.Host.Replace("www.", "", StringComparison.OrdinalIgnoreCase);
-            if (haystack.Contains(host, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            var label = host.Split('.')[0];
-            if (label.Length >= 3 && haystack.Contains(label, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        definition.NotificationAppId = definition.Name.Trim();
+        return true;
     }
 }

@@ -25,6 +25,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly Dictionary<string, int> _titleCounts = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _titles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, bool> _playingAudio = new(StringComparer.OrdinalIgnoreCase);
+    private int _switchGeneration;
 
     public MainViewModel(
         ServiceConfigurationStore store,
@@ -41,10 +42,22 @@ public sealed partial class MainViewModel : ObservableObject
         _webViewHost.DocumentTitleChanged += OnWebTitleChanged;
         _webViewHost.DocumentAudioChanged += OnWebAudioChanged;
 
+        var backfilled = false;
         foreach (var definition in store.Load())
         {
+            if (NotificationMapper.TryBackfillNotificationAppId(definition))
+            {
+                backfilled = true;
+            }
+
             _serviceManager.Register(definition);
             Services.Add(new ServiceItemViewModel(definition));
+        }
+
+        if (backfilled)
+        {
+            _store.Save(ConfiguredServices);
+            _logger.LogInformation("Backfilled NotificationAppId on existing services.");
         }
 
         StatusText = "Select a service";
@@ -85,6 +98,7 @@ public sealed partial class MainViewModel : ObservableObject
         ShowPlaceholder = false;
         PlaceholderText = string.Empty;
         _logger.LogInformation("User selected {ServiceId}.", item.Definition.Id);
+        // Clear toast contribution for the tab the user opened; other tabs keep their bubbles.
         _toastCounts.Remove(item.Definition.Id);
         try
         {
@@ -118,6 +132,7 @@ public sealed partial class MainViewModel : ObservableObject
             return false;
         }
 
+        NotificationMapper.TryBackfillNotificationAppId(definition);
         _serviceManager.Register(definition);
         var item = new ServiceItemViewModel(definition);
         Services.Add(item);
@@ -153,8 +168,8 @@ public sealed partial class MainViewModel : ObservableObject
     public bool MuteOthersDuringCalls { get; set; }
 
     /// <summary>
-    /// App-level toggle from Settings. Call toasts switch for every mapped service when this is on,
-    /// even if that service was added before the setting existed (per-service flag stays a seed for new rows).
+    /// App-level toggle from Settings. Any newly mapped toast or call switches to that service
+    /// when this is on (per-service AutoSwitchOnNotification still enables switch when off).
     /// </summary>
     public bool AutoSwitchOnCallByDefault { get; set; } = true;
 
@@ -164,6 +179,12 @@ public sealed partial class MainViewModel : ObservableObject
         foreach (var pair in counts)
         {
             _toastCounts[pair.Key] = pair.Value;
+        }
+
+        // Selecting a tab clears that service's toast contribution; keep selected at 0 for badges.
+        if (SelectedService is { } selected)
+        {
+            _toastCounts.Remove(selected.Definition.Id);
         }
 
         RefreshBadges();
@@ -193,9 +214,6 @@ public sealed partial class MainViewModel : ObservableObject
         var alreadySelected = SelectedService is not null
             && SelectedService.Definition.Id.Equals(target.Definition.Id, StringComparison.OrdinalIgnoreCase);
 
-        // Settings "Switch on calls" is the live master switch for auto-tab (calls and
-        // other mapped toasts). Per-service AutoSwitchOnNotification still enables it
-        // when the app-level toggle is off (seeded onto newly added services).
         var allowSwitch = AutoSwitchOnCallByDefault || target.Definition.AutoSwitchOnNotification;
         var shouldSwitch = allowSwitch && !inOtherCall && !alreadySelected;
 
@@ -203,7 +221,8 @@ public sealed partial class MainViewModel : ObservableObject
         {
             _logger.LogInformation("Switching to {ServiceId} from notification. Call={IsCall}.", latestServiceId, isCall);
             ActivateRequested?.Invoke();
-            _ = SelectServiceAsync(target);
+            var generation = ++_switchGeneration;
+            _ = SwitchFromNotificationAsync(target, generation);
         }
         else
         {
@@ -215,6 +234,26 @@ public sealed partial class MainViewModel : ObservableObject
                 inOtherCall,
                 alreadySelected);
         }
+    }
+
+    private async Task SwitchFromNotificationAsync(ServiceItemViewModel target, int generation)
+    {
+        try
+        {
+            await SelectServiceAsync(target).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            if (generation == _switchGeneration)
+            {
+                _logger.LogWarning(ex, "Auto-switch to {ServiceId} failed.", target.Definition.Id);
+            }
+        }
+    }
+
+    public void PollNativeTitles()
+    {
+        _serviceManager.PollNativeTitles();
     }
 
     public void RefreshCallMute()

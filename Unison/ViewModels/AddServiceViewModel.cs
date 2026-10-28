@@ -168,6 +168,7 @@ public sealed partial class AddServiceViewModel : ObservableObject
                 ServiceType = ServiceType.NativeApplication,
                 ExecutablePath = app.ExecutablePath,
                 ProcessName = app.ProcessName,
+                NotificationAppId = app.DisplayName,
                 IconPath = app.IconPath,
                 IconUrl = _catalog.FindIconUrlByName(app.DisplayName)
             };
@@ -331,7 +332,8 @@ public sealed partial class AddServiceViewModel : ObservableObject
             Id = id,
             Name = name,
             ServiceType = ServiceType.WebService,
-            Url = uri.ToString()
+            Url = uri.ToString(),
+            NotificationAppId = name
         };
         _settings.ApplyDefaultsTo(definition);
         return definition;

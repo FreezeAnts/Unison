@@ -22,4 +22,6 @@ public sealed partial class SettingsPage : UserControl
     public bool CanInstall(bool visible, bool busy) => visible && !busy;
 
     public Visibility ShowIf(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility ShowIfNot(bool value) => value ? Visibility.Collapsed : Visibility.Visible;
 }

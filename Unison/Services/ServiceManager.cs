@@ -148,6 +148,27 @@ public sealed class ServiceManager
         _logger.LogInformation("Restored all managed native windows.");
     }
 
+    /// <summary>
+    /// Read current titles from managed native windows so unread badges can update
+    /// from "(3) Microsoft Teams"-style titles without waiting for a toast.
+    /// </summary>
+    public void PollNativeTitles()
+    {
+        foreach (var adapter in _adapters.Values)
+        {
+            if (adapter is not NativeApplicationAdapter native || !native.HasManagedWindow)
+            {
+                continue;
+            }
+
+            var title = native.ReadWindowTitle();
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                HostedWindowTitleChanged?.Invoke(adapter.Definition.Id, title);
+            }
+        }
+    }
+
     private IServiceAdapter CreateAdapter(ServiceDefinition definition)
     {
         if (definition.ServiceType == ServiceType.WebService)

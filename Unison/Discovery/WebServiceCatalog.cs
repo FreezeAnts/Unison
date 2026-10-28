@@ -86,6 +86,7 @@ public sealed record WebServiceCatalogEntry(
         ServiceType = ServiceType.WebService,
         Url = Url,
         IconUrl = IconUrl,
+        NotificationAppId = Name,
         ShowNotificationBadge = true
     };
 }

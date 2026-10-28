@@ -44,6 +44,17 @@
                 Opacity="0.7"
                 TextWrapping="Wrap"
                 Text="Badge defaults apply to services you add from now on. Auto-switch applies immediately to every mapped service when a toast or call arrives." />
+            <TextBlock
+                Opacity="0.85"
+                TextWrapping="Wrap"
+                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                Text="{x:Bind ViewModel.NotificationAccessText, Mode=OneWay}"
+                Visibility="{x:Bind ShowIf(ViewModel.NotificationAccessDenied), Mode=OneWay}" />
+            <TextBlock
+                Opacity="0.7"
+                TextWrapping="Wrap"
+                Text="{x:Bind ViewModel.NotificationAccessText, Mode=OneWay}"
+                Visibility="{x:Bind ShowIfNot(ViewModel.NotificationAccessDenied), Mode=OneWay}" />
             <ToggleSwitch
                 Header="Show notification badges"
                 IsOn="{x:Bind ViewModel.ShowNotificationBadgeByDefault, Mode=TwoWay}" />
